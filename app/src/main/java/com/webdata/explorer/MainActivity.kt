@@ -585,6 +585,7 @@ class MainActivity : Activity() {
                 control("+ PESTAÑA") { newBrowserTab() }
                 control("PESTAÑAS") { showBrowserTabs() }
                 control("PAUSAR SCAN") { toggleScan() }
+                control("DIAGNÓSTICO") { showDiagnostics() }
             }
             addView(browserControls)
             addView(browser, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -1009,8 +1010,8 @@ class MainActivity : Activity() {
             toast("Esta solicitud solo tiene URL; WebView no expuso más datos")
             return
         }
-        val labels = arrayOf("Resumen", "Encabezados solicitud", "Cuerpo enviado", "Encabezados respuesta", "Cuerpo recibido")
-        val keys = arrayOf("", "requestHeaders", "requestBody", "responseHeaders", "responseBody")
+        val labels = arrayOf("Resumen", "Solicitud", "Encabezados enviados", "Cuerpo enviado", "Encabezados recibidos", "Cuerpo recibido", "Errores/diagnóstico")
+        val keys = arrayOf("", "", "requestHeaders", "requestBody", "responseHeaders", "responseBody", "note")
         var selected = 0
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(8), dp(12), dp(4)) }
         val tabs = HorizontalScrollView(this)
@@ -1032,13 +1033,30 @@ class MainActivity : Activity() {
                 append("Captura: ").append(detail.optString("captureState", "parcial")).append("\n")
                 append(detail.optString("note", ""))
             }
+            if (index == 1) return buildString {
+                append(detail.optString("method")).append(" ").append(detail.optString("url")).append("\n")
+                append("Hora: ").append(detail.optString("timestamp")).append("\n")
+                append("Estado HTTP: ").append(if (detail.optInt("status") > 0) detail.optInt("status") else "No disponible").append("\n")
+                append("Origen iniciador: ").append(detail.optString("initiatorOrigin").ifBlank { "No disponible" }).append("\n")
+                append("Duración: ").append(if (detail.optLong("durationMs", -1L) >= 0) "${detail.optLong("durationMs")} ms" else "No disponible")
+            }
             val raw = detail.optString(keys[index], "")
-            if (raw.isNotBlank()) return raw
+            if (raw.isNotBlank()) {
+                if (index == 5 && (detail.optString("bodyType") == "JSON" || raw.trimStart().startsWith("{") || raw.trimStart().startsWith("["))) {
+                    return runCatching {
+                        if (raw.trimStart().startsWith("[")) org.json.JSONArray(raw).toString(2)
+                        else org.json.JSONObject(raw).toString(2)
+                    }.getOrDefault(raw)
+                }
+                return raw
+            }
             return when (index) {
-                1 -> "Encabezados no disponibles: la solicitud no fue observada por instrumentación JavaScript o WebView no los expuso."
-                2 -> if (detail.optString("method") in listOf("GET", "HEAD") && detail.optString("kind") == "WEBVIEW") "No se observó cuerpo enviado. GET/HEAD normalmente no envían cuerpo; shouldInterceptRequest no expone el cuerpo original." else "Cuerpo enviado no disponible. WebView no ofrece el cuerpo de solicitudes de recursos en shouldInterceptRequest; para JavaScript solo se capturan cuerpos de texto accesibles."
-                3 -> "Encabezados de respuesta no disponibles para esta solicitud."
-                else -> "Cuerpo recibido no disponible. WebView no expone directamente el cuerpo de respuestas desde shouldInterceptRequest; el navegador solo permite leer algunas respuestas fetch/XHR accesibles."
+                2 -> "Encabezados de solicitud no disponibles: WebView no los expuso para este tipo de recurso."
+                3 -> if (detail.optString("method") in listOf("GET", "HEAD") && detail.optString("kind") == "WEBVIEW") "No se observó cuerpo enviado. GET/HEAD normalmente no envían cuerpo; shouldInterceptRequest no expone el cuerpo original." else "Cuerpo enviado no disponible. WebView no ofrece el cuerpo de solicitudes de recursos en shouldInterceptRequest; para JavaScript solo se capturan cuerpos de texto accesibles."
+                4 -> "Encabezados de respuesta no disponibles para esta solicitud."
+                5 -> "Cuerpo recibido no disponible. WebView no expone directamente el cuerpo de respuestas desde shouldInterceptRequest; solo se pueden leer algunas respuestas fetch/XHR accesibles."
+                6 -> "No se registraron errores específicos. Consultá el estado de captura y la nota de la sección Resumen."
+                else -> "No hay datos disponibles para esta sección."
             }
         }
         fun updateSection() { content.text = sectionText(selected) }
@@ -1077,6 +1095,57 @@ class MainActivity : Activity() {
         updateSection()
         android.app.AlertDialog.Builder(this).setTitle("Detalle de solicitud").setView(layout).setPositiveButton("Cerrar", null).show()
     }
+    private fun showDiagnostics() {
+        val snapshot = synchronized(requestLog) { requestLog.toList() }
+        val details = synchronized(requestDetails) { requestDetails.values.map { org.json.JSONObject(it.toString()) } }
+        val statuses = details.count { it.optInt("status", 0) > 0 }
+        val bodies = details.count { it.optString("responseBody").isNotBlank() }
+        val partial = details.count { it.optString("captureState").equals("PARCIAL", true) || it.optString("captureState").contains("LIMITADA", true) }
+        val failed = details.count { it.optInt("status", 0) >= 400 || it.optString("kind").contains("ERROR", true) }
+        val errors = snapshot.filter { line ->
+            val l = line.lowercase()
+            l.contains("error") || l.contains("falló") || l.contains("no disponible")
+        }.takeLast(12)
+        val report = buildString {
+            appendLine("DIAGNÓSTICO — WebData Explorer")
+            appendLine("WebView inicializado: ${::browser.isInitialized}")
+            appendLine("Instrumentación document-start: ${if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) "disponible en este WebView" else "no disponible; se usa instalación posterior cuando es posible"}")
+            appendLine("Escaneo: ${if (scanEnabled) "activo" else "pausado"}")
+            appendLine("Solicitudes visibles: ${snapshot.size}")
+            appendLine("Registros con estado HTTP: $statuses")
+            appendLine("Cuerpos de respuesta disponibles: $bodies")
+            appendLine("Capturas parciales/limitadas: $partial")
+            appendLine("Respuestas HTTP 4xx/5xx o errores registrados: $failed")
+            appendLine("Eventos recibidos por puente JS: $captureEventsReceived")
+            appendLine("Errores del puente JS: $captureBridgeErrors")
+            appendLine()
+            appendLine("LIMITACIONES")
+            appendLine("• shouldInterceptRequest detecta URL/método/encabezados de solicitud, pero no entrega el cuerpo original de la respuesta.")
+            appendLine("• fetch/XHR solo se inspeccionan cuando la instrumentación se instala a tiempo y el cuerpo es textual y clonable.")
+            appendLine("• Encabezados restringidos por CORS pueden no estar disponibles; iframe sin instrumentación también puede quedar incompleto.")
+            appendLine("• Imágenes, audio, video y respuestas binarias no se almacenan como cuerpos.")
+            appendLine()
+            appendLine("ERRORES RECIENTES")
+            appendLine(errors.joinToString("\n").ifBlank { "No se detectaron errores recientes en el registro visible." })
+        }
+        val view = TextView(this).apply {
+            text = report
+            textSize = 13f
+            setTextIsSelectable(true)
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Diagnóstico técnico")
+            .setView(ScrollView(this).apply { addView(view) })
+            .setNeutralButton("COPIAR") { _, _ ->
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("Diagnóstico WebData", report))
+                toast("Diagnóstico copiado")
+            }
+            .setPositiveButton("CERRAR", null)
+            .show()
+    }
+
     private fun isAntiBotUrl(value: String): Boolean {
         val lower = value.lowercase()
         return listOf("cloudflare", "/cdn-cgi/", "turnstile", "challenge-platform", "chl_page", "/pat/", "/fo/", "/ci/", "brunhild.challenges").any { lower.contains(it) }
