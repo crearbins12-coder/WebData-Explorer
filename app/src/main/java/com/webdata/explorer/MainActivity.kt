@@ -764,11 +764,12 @@ class MainActivity : Activity() {
 
     private fun addRequest(line: String) {
         if (!scanEnabled) return
+        val safeLine = Regex("""https?://[^\s]+""", RegexOption.IGNORE_CASE).replace(line) { sanitizeUrlForStorage(it.value) }
         var changed = false
         synchronized(requestLog) {
             // HashSet evita recorrer todo el historial por cada solicitud capturada.
-            if (requestKeys.add(line)) {
-                requestLog.add(line)
+            if (requestKeys.add(safeLine)) {
+                requestLog.add(safeLine)
                 if (requestLog.size > 500) {
                     val removed = requestLog.removeAt(0)
                     requestKeys.remove(removed)
@@ -877,6 +878,26 @@ class MainActivity : Activity() {
         requestText.text = out
     }
 
+    private fun sanitizeUrlForStorage(raw: String): String {
+        return raw.replace(
+            Regex("(?i)([?&](?:access_token|refresh_token|token|auth|authorization|api_key|apikey|signature|sig|jwt|session|password|credential)=)[^&#\\s]+")
+        ) { it.groupValues[1] + "[REDACTADO]" }
+    }
+
+    private fun classifyContentType(raw: String): String {
+        val type = raw.substringBefore(";").trim().lowercase()
+        return when {
+            type.contains("json") -> "JSON"
+            type.contains("xml") -> "XML"
+            type.contains("html") -> "HTML"
+            type.startsWith("text/") || type.contains("javascript") -> "TEXTO"
+            type.startsWith("image/") -> "IMAGEN"
+            type.startsWith("video/") || type.startsWith("audio/") || type.contains("mpegurl") || type.contains("dash+xml") -> "MULTIMEDIA"
+            type.isBlank() -> "DESCONOCIDO"
+            else -> "BINARIO/OTRO"
+        }
+    }
+
     private fun cleanSensitiveText(raw: String): String {
         var value = raw
         value = value.replace(Regex("(?i)(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|secret|session|jwt|credential|signature)(\\s*[:=]\\s*)([^\\r\\n,;&]+)")) { m ->
@@ -895,11 +916,13 @@ class MainActivity : Activity() {
         if (!scanEnabled) return
         if (!url.startsWith("http://") && !url.startsWith("https://")) return
         val stamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.US).format(java.util.Date())
+        val safeUrl = sanitizeUrlForStorage(url)
         val statusLabel = if (status > 0) "HTTP $status" else "HTTP ?"
-        val line = "$stamp · ${method.uppercase()} · $statusLabel · [$kind/${classifyRequest(url)}] $url"
+        val line = "$stamp · ${method.uppercase()} · $statusLabel · [$kind/${classifyRequest(safeUrl)}] $safeUrl"
         val detail = org.json.JSONObject()
-            .put("timestamp", stamp).put("url", url).put("method", method.uppercase())
+            .put("timestamp", stamp).put("url", safeUrl).put("method", method.uppercase())
             .put("status", status).put("kind", kind).put("contentType", contentType)
+            .put("bodyType", classifyContentType(contentType))
             .put("requestHeaders", cleanSensitiveText(requestHeaders).take(12000))
             .put("requestBody", cleanSensitiveText(requestBody).take(16000))
             .put("responseHeaders", cleanSensitiveText(responseHeaders).take(12000))
@@ -935,6 +958,7 @@ class MainActivity : Activity() {
                 append("Fecha: ").append(detail.optString("timestamp")).append("\n")
                 append("Estado HTTP: ").append(if (detail.optInt("status") > 0) detail.optInt("status") else "No disponible").append("\n")
                 append("Tipo: ").append(detail.optString("contentType", "desconocido")).append("\n")
+                append("Formato: ").append(detail.optString("bodyType", "DESCONOCIDO")).append("\n")
                 append("Captura: ").append(detail.optString("captureState", "parcial")).append("\n")
                 append(detail.optString("note", ""))
             }
