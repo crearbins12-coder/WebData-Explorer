@@ -501,7 +501,7 @@ class MainActivity : Activity() {
             }
         }
 
-        val absoluteRegex = Regex("""https?://[^\s"'<>\\]+""", RegexOption.IGNORE_CASE)
+        val absoluteRegex = Regex("""https?://[^,\\s"'<>\\\\]+""", RegexOption.IGNORE_CASE)
         for (match in absoluteRegex.findAll(html)) {
             val value = match.value.trimEnd(')', ']', ',', ';', '.')
             links.add(value)
@@ -564,6 +564,7 @@ class MainActivity : Activity() {
              html.contains("cf-chl-", true) || html.contains("Just a moment", true))
         val accessBlocked = page.code == 401 || page.code == 403 || page.code == 429
         val domains = (links + scripts + media).mapNotNull { runCatching { URL(it).host }.getOrNull() }.toSortedSet()
+        val playerPages = links.filter { isPlayerPage(it) }.toSortedSet()
 
         return buildString {
             appendLine("WEBData Explorer — INFORME")
@@ -602,11 +603,23 @@ class MainActivity : Activity() {
                 appendLine(scriptErrors.take(20).joinToString("\n"))
             }
             appendLine()
-            appendLine("POSIBLES MEDIOS (${media.size})")
-            appendLine(media.take(150).joinToString("\n").ifBlank { "No se encontraron URLs multimedia evidentes." })
+            appendLine("PÁGINAS DE REPRODUCTOR / EMBEDS (${playerPages.size})")
+            appendLine(playerPages.take(100).joinToString("\n").ifBlank { "No se detectaron páginas de reproductor reconocibles." })
+            appendLine()
+            appendLine("POSIBLES MEDIOS DIRECTOS (${media.size})")
+            appendLine(media.take(150).joinToString("\n").ifBlank { "No se encontraron URLs multimedia directas evidentes. Los enlaces a páginas de reproductor no son archivos de video directos." })
             appendLine()
             appendLine("NOTA: se inspeccionó el HTML recibido y hasta 12 scripts externos. Las rutas detectadas son coincidencias, no garantía de que un endpoint sea válido o accesible.")
         }
+    }
+
+    private fun isPlayerPage(value: String): Boolean {
+        val uri = runCatching { URI(value) }.getOrNull() ?: return false
+        val host = (uri.host ?: "").lowercase()
+        val path = (uri.path ?: "").lowercase()
+        val knownHosts = listOf("doodstream.com", "dhcplay.com", "movearnpre.com", "voe.sx", "mixdrop", "mp4upload.com", "bysesukior.com")
+        return knownHosts.any { host == it || host.endsWith(".$it") } ||
+            path.startsWith("/embed/") || path.startsWith("/d/") || path.startsWith("/f/")
     }
 
     private fun isMedia(value: String): Boolean {
