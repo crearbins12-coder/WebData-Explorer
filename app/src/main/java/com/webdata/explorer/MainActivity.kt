@@ -81,7 +81,7 @@ class MainActivity : Activity() {
                         if (url.startsWith("http://") || url.startsWith("https://")) addRequest("$kind HTTP $code [${classifyRequest(url)}] $url")
                     }
                 }
-                if (browserMode) mainHandler.postDelayed(requestPollRunnable, 1800)
+                if (browserMode) mainHandler.postDelayed(this, 1800)
             }
         }
     }
