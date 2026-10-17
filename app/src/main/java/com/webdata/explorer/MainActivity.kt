@@ -2065,6 +2065,15 @@ class MainActivity : Activity() {
                 clipboard.setPrimaryClip(ClipData.newPlainText("Informe APK", report))
                 toast("Informe del APK copiado")
             }
+            .setNegativeButton("EXPORTAR TXT") { _, _ ->
+                pendingExport = report
+                val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TITLE, "webdata-analisis-apk.txt")
+                }
+                startActivityForResult(intent, exportRequestCode)
+            }
             .setPositiveButton("CERRAR", null)
             .show()
     }
