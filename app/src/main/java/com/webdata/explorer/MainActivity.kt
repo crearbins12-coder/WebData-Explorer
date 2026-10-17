@@ -378,6 +378,8 @@ class MainActivity : Activity() {
         ).apply { topMargin = dp(6) })
         setContentView(root)
         browser.tag = browserPanel
+        restoreRequestLog()
+        refreshRequestText()
     }
 
     private fun showBrowser() {
@@ -395,7 +397,6 @@ class MainActivity : Activity() {
         urlInput.setText(raw)
         if (activeTabIndex !in browserTabs.indices) { browserTabs.add(raw); activeTabIndex = browserTabs.lastIndex }
         else browserTabs[activeTabIndex] = raw
-        requestLog.clear()
         refreshRequestText()
         browser.loadUrl(raw)
     }
@@ -431,7 +432,6 @@ class MainActivity : Activity() {
         if (index !in browserTabs.indices) return
         activeTabIndex = index
         val url = browserTabs[index]
-        requestLog.clear()
         refreshRequestText()
         urlInput.setText(url)
         switchingTab = true
@@ -461,13 +461,36 @@ class MainActivity : Activity() {
     }
 
     private fun addRequest(line: String) {
+        var changed = false
         synchronized(requestLog) {
             if (!requestLog.contains(line)) {
                 requestLog.add(line)
-                if (requestLog.size > 300) requestLog.removeAt(0)
+                if (requestLog.size > 1000) requestLog.removeAt(0)
+                changed = true
             }
         }
+        if (changed) saveRequestLog()
         runOnUiThread { refreshRequestText() }
+    }
+
+    private fun requestStore() = getSharedPreferences("webdata_scan", Context.MODE_PRIVATE)
+
+    private fun saveRequestLog() {
+        val snapshot = synchronized(requestLog) { requestLog.toList() }
+        val array = org.json.JSONArray()
+        snapshot.forEach { array.put(it) }
+        requestStore().edit().putString("requests", array.toString()).apply()
+    }
+
+    private fun restoreRequestLog() {
+        runCatching {
+            val raw = requestStore().getString("requests", "[]") ?: "[]"
+            val array = org.json.JSONArray(raw)
+            synchronized(requestLog) {
+                requestLog.clear()
+                for (i in 0 until array.length()) requestLog.add(array.optString(i))
+            }
+        }
     }
 
     private fun matchesFilter(line: String): Boolean {
