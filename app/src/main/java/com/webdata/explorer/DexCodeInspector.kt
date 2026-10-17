@@ -162,7 +162,7 @@ object DexCodeInspector {
     }
 
     private val NETWORK_OWNER_REGEX = Regex(
-        """(?:okhttp|retrofit|volley|ktor|HttpURLConnection|java\\.net\\.URL|URLConnection|WebView|Cronet|graphql)""",
+        """(?:okhttp|retrofit|volley|ktor|HttpURLConnection|java\.net\.URL|URLConnection|WebView|Cronet|graphql)""",
         RegexOption.IGNORE_CASE
     )
     private val NETWORK_METHODS = setOf(
