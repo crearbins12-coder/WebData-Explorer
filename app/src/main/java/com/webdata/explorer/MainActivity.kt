@@ -2043,6 +2043,41 @@ class MainActivity : Activity() {
             textSize = 12f
             setPadding(0, 0, 0, dp(8))
         })
+        val quickActions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        fun addReportCopyButton(label: String, startMarker: String, endMarker: String) {
+            val button = Button(this).apply {
+                text = label
+                textSize = 10f
+                setOnClickListener {
+                    val start = report.indexOf(startMarker)
+                    val end = if (start >= 0) report.indexOf(endMarker, start + startMarker.length) else -1
+                    val section = if (start >= 0) {
+                        report.substring(start, if (end >= 0) end else report.length).trim()
+                    } else ""
+                    if (section.isBlank()) {
+                        toast("Esa sección no contiene resultados")
+                    } else {
+                        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(ClipData.newPlainText(label, section))
+                        toast("$label copiado")
+                    }
+                }
+            }
+            quickActions.addView(button, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        addReportCopyButton(
+            "COPIAR LLAMADAS DE RED",
+            "=== POSIBLES PUNTOS DE LLAMADA DE RED ===",
+            "=== URLS ENCONTRADAS EN DEX ==="
+        )
+        addReportCopyButton(
+            "COPIAR URLS",
+            "=== URLS ENCONTRADAS EN DEX ===",
+            "=== POSIBLES RUTAS API ==="
+        )
+        panel.addView(quickActions)
         val output = TextView(this).apply {
             text = report
             textSize = 11f
