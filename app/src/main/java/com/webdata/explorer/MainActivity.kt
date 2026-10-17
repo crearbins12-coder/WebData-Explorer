@@ -38,6 +38,7 @@ class MainActivity : Activity() {
     private lateinit var resultScroll: ScrollView
     private lateinit var contentFrame: FrameLayout
     private val requestLog = java.util.Collections.synchronizedList(mutableListOf<String>())
+    private val requestKeys = HashSet<String>()
     private var lastReport = ""
     private var browserMode = false
     private var requestFilter = "TODAS"
@@ -92,7 +93,7 @@ class MainActivity : Activity() {
                         if (url.startsWith("http://") || url.startsWith("https://")) addRequest("$kind HTTP $code [${classifyRequest(url)}] $url")
                     }
                 }
-                if (browserMode) mainHandler.postDelayed(this, 1800)
+                if (browserMode) mainHandler.postDelayed(this, 2800)
             }
         }
     }
@@ -575,19 +576,22 @@ class MainActivity : Activity() {
     private fun addRequest(line: String) {
         var changed = false
         synchronized(requestLog) {
-            if (!requestLog.contains(line)) {
+            // HashSet evita recorrer todo el historial por cada solicitud capturada.
+            if (requestKeys.add(line)) {
                 requestLog.add(line)
-                if (requestLog.size > 1000) requestLog.removeAt(0)
+                if (requestLog.size > 500) {
+                    val removed = requestLog.removeAt(0)
+                    requestKeys.remove(removed)
+                }
                 changed = true
             }
         }
         if (changed) {
-            // Agrupar escrituras y actualizaciones de UI para no bloquear la navegación
-            // cuando una página genera cientos de recursos.
+            // Agrupar persistencia y refresco de pantalla durante ráfagas de solicitudes.
             mainHandler.removeCallbacks(saveRequestLogRunnable)
-            mainHandler.postDelayed(saveRequestLogRunnable, 700)
+            mainHandler.postDelayed(saveRequestLogRunnable, 1000)
             mainHandler.removeCallbacks(refreshRequestTextRunnable)
-            mainHandler.postDelayed(refreshRequestTextRunnable, 250)
+            mainHandler.postDelayed(refreshRequestTextRunnable, 400)
         }
     }
 
@@ -606,7 +610,12 @@ class MainActivity : Activity() {
             val array = org.json.JSONArray(raw)
             synchronized(requestLog) {
                 requestLog.clear()
-                for (i in 0 until array.length()) requestLog.add(array.optString(i))
+                requestKeys.clear()
+                for (i in 0 until array.length()) {
+                    val item = array.optString(i)
+                    if (requestKeys.add(item)) requestLog.add(item)
+                }
+                while (requestLog.size > 500) requestKeys.remove(requestLog.removeAt(0))
             }
         }
     }
