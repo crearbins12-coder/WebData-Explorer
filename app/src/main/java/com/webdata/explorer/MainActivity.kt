@@ -199,7 +199,10 @@ class MainActivity : Activity() {
 
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
-                    if (!url.isNullOrBlank()) urlInput.setText(url)
+                    if (!url.isNullOrBlank()) {
+                        urlInput.setText(url)
+                        saveHistory(url)
+                    }
                     statusText.text = "Navegación terminada · registrando recursos…"
                     // Instala observadores pasivos para las siguientes interacciones del usuario.
                     // No resuelve ni evita desafíos de acceso.
@@ -327,6 +330,9 @@ class MainActivity : Activity() {
                         }, "Compartir página"))
                     } else toast("No hay URL para compartir")
                 }
+                control("★") { toggleFavorite() }
+                control("HIST.") { showSavedPages(false) }
+                control("FAV.") { showSavedPages(true) }
             }
             addView(browserControls)
             addView(browser, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -707,6 +713,73 @@ class MainActivity : Activity() {
         return listOf(".m3u8", ".mp4", ".mpd", ".webm", ".mov", ".m4v", ".ts").any { path.endsWith(it) }
             || value.contains("manifest", true)
             || value.contains("videoplayback", true)
+    }
+
+    private fun pageStore() = getSharedPreferences("webdata_pages", Context.MODE_PRIVATE)
+
+    private fun readPages(key: String): MutableList<String> {
+        val result = mutableListOf<String>()
+        runCatching {
+            val array = org.json.JSONArray(pageStore().getString(key, "[]") ?: "[]")
+            for (i in 0 until array.length()) {
+                val item = array.optString(i)
+                if (item.startsWith("https://") || item.startsWith("http://")) result.add(item)
+            }
+        }
+        return result
+    }
+
+    private fun writePages(key: String, pages: List<String>) {
+        val array = org.json.JSONArray()
+        pages.distinct().take(100).forEach { array.put(it) }
+        pageStore().edit().putString(key, array.toString()).apply()
+    }
+
+    private fun saveHistory(url: String) {
+        if (!url.startsWith("http://") && !url.startsWith("https://")) return
+        val pages = readPages("history").toMutableList()
+        pages.remove(url)
+        pages.add(0, url)
+        writePages("history", pages)
+    }
+
+    private fun toggleFavorite() {
+        val url = browser.url ?: urlInput.text.toString().trim()
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+            toast("Abrí una página primero")
+            return
+        }
+        val pages = readPages("favorites")
+        if (pages.contains(url)) {
+            pages.remove(url)
+            writePages("favorites", pages)
+            toast("Favorito eliminado")
+        } else {
+            writePages("favorites", listOf(url) + pages)
+            toast("Página guardada en favoritos")
+        }
+    }
+
+    private fun showSavedPages(favorites: Boolean) {
+        val pages = readPages(if (favorites) "favorites" else "history")
+        val title = if (favorites) "Favoritos" else "Historial"
+        if (pages.isEmpty()) {
+            toast(if (favorites) "Todavía no hay favoritos" else "El historial está vacío")
+            return
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle(title)
+            .setItems(pages.map { it.take(90) }.toTypedArray()) { _, which ->
+                val selected = pages.getOrNull(which) ?: return@setItems
+                urlInput.setText(selected)
+                showBrowser()
+            }
+            .setNeutralButton("Borrar lista") { _, _ ->
+                writePages(if (favorites) "favorites" else "history", emptyList())
+                toast("$title borrado")
+            }
+            .setNegativeButton("Cerrar", null)
+            .show()
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
