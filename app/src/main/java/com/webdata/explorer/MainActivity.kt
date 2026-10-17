@@ -54,7 +54,7 @@ class MainActivity : Activity() {
 
         urlInput = EditText(this).apply {
             hint = "https://ejemplo.com"
-            singleLine = true
+            isSingleLine = true
             textSize = 15f
             setTextColor(Color.WHITE)
             setHintTextColor(Color.GRAY)
