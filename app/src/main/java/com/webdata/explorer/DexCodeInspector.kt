@@ -138,7 +138,7 @@ object DexCodeInspector {
                 .sortedBy { it.relativeTo(marker).path }
                 .take(200)
                 .toList()
-            val out = StringBuilder("# Smali descompilado por baksmali (muestra limitada)\\n")
+            val out = StringBuilder("# Smali descompilado por baksmali (muestra limitada)\n")
             for (file in files) {
                 if (out.length >= 100_000) break
                 out.appendLine()
