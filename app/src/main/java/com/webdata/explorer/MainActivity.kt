@@ -1577,16 +1577,6 @@ class MainActivity : Activity() {
                 if (requestDetails.containsKey(line)) showRequestDetails(line)
                 else toast("Solo se observó la URL; no hay detalles de respuesta capturados")
             }
-            .setNegativeButton("GUARDAR TXT") { _, _ ->
-                pendingExport = report
-                val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                    addCategory(Intent.CATEGORY_OPENABLE)
-                    type = "text/plain"
-                    putExtra(Intent.EXTRA_TITLE, "analisis-apk.txt")
-                }
-                runCatching { startActivityForResult(intent, exportRequestCode) }
-                    .onFailure { toast("No se pudo abrir el guardado: ${it.message ?: "error"}") }
-            }
             .setPositiveButton("CERRAR", null)
             .show()
     }
@@ -2130,7 +2120,7 @@ class MainActivity : Activity() {
     private fun showSmaliSearchDialog(report: String) {
         val input = EditText(this).apply {
             hint = "Ej.: baseUrl, okhttp, getInputStream, /api/"
-            singleLine = true
+            isSingleLine = true
             setPadding(dp(12), dp(8), dp(12), dp(8))
         }
         val dialog = android.app.AlertDialog.Builder(this)
