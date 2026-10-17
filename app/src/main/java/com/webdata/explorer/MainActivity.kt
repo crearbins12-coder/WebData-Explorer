@@ -109,6 +109,10 @@ class MainActivity : Activity() {
     item.url=new URL(String(item.url||''),location.href).href;
     if (!/^https?:/i.test(item.url)) return;
     item.timestamp=new Date().toISOString();
+    item.initiatorOrigin=item.initiatorOrigin||location.origin;
+    item.durationMs=Number.isFinite(item.durationMs)?item.durationMs:-1;
+    item.requestSize=Number.isFinite(item.requestSize)?item.requestSize:String(item.requestBody||'').length;
+    item.responseSize=Number.isFinite(item.responseSize)?item.responseSize:String(item.responseBody||'').length;
     item.requestHeaders=redact(item.requestHeaders||'');
     item.requestBody=redact(item.requestBody||'');
     item.responseHeaders=redact(item.responseHeaders||'');
@@ -154,7 +158,7 @@ class MainActivity : Activity() {
      var responseBodyPromise=clone?textResponse(clone,ct):Promise.resolve({body:'',state:'PARCIAL',note:'No se pudo clonar la respuesta sin alterar la solicitud original.'});
      Promise.all([reqBodyPromise,responseBodyPromise]).then(function(values) {
       var rb=values[1];
-      record({kind:'FETCH',method:String(method).toUpperCase(),url:url,status:response.status,requestHeaders:reqHeaders,requestBody:values[0],responseHeaders:headersText(response.headers),responseBody:rb.body,contentType:ct,captureState:rb.state,note:rb.note});
+      record({kind:'FETCH',method:String(method).toUpperCase(),url:url,status:response.status,requestHeaders:reqHeaders,requestBody:values[0],responseHeaders:headersText(response.headers),responseBody:rb.body,contentType:ct,captureState:rb.state,note:rb.note,durationMs:Date.now()-started,requestSize:String(values[0]||'').length,responseSize:String(rb.body||'').length});
      }).catch(function(){record({kind:'FETCH',method:String(method).toUpperCase(),url:url,status:response.status,requestHeaders:reqHeaders,requestBody:'',responseHeaders:headersText(response.headers),responseBody:'',contentType:ct,captureState:'PARCIAL',note:'No se pudo leer el cuerpo de la respuesta.'});});
      return response;
     },function(error) {
@@ -173,7 +177,7 @@ class MainActivity : Activity() {
    return originalSetHeader.apply(this,arguments);
   };
   XMLHttpRequest.prototype.send=function(body) {
-   var xhr=this, requestBody='';
+   var xhr=this, requestBody='', started=Date.now();
    try {
     if (typeof body==='string' || (typeof URLSearchParams!=='undefined'&&body instanceof URLSearchParams)) requestBody=redact(body.toString());
     else if (body!=null) requestBody='[Cuerpo no textual/FormData omitido por seguridad]';
@@ -191,7 +195,7 @@ class MainActivity : Activity() {
       else { responseBody=''; note='Cuerpo omitido: tipo de respuesta no textual.'; }
      }
     } catch(e) { responseBody=''; note='El navegador no permitió leer el cuerpo: '+String(e); }
-    record({kind:'XHR',method:String(xhr.__wdxMethod||'GET').toUpperCase(),url:xhr.__wdxUrl||'',status:xhr.status||0,requestHeaders:redact((xhr.__wdxReqHeaders||[]).join('\n')),requestBody:requestBody,responseHeaders:redact(headers),responseBody:responseBody,contentType:ct,captureState:state,note:note||'Cuerpo capturado desde XMLHttpRequest cuando fue accesible.'});
+    record({kind:'XHR',method:String(xhr.__wdxMethod||'GET').toUpperCase(),url:xhr.__wdxUrl||'',status:xhr.status||0,requestHeaders:redact((xhr.__wdxReqHeaders||[]).join('\n')),requestBody:requestBody,responseHeaders:redact(headers),responseBody:responseBody,contentType:ct,captureState:state,note:note||'Cuerpo capturado desde XMLHttpRequest cuando fue accesible.',durationMs:Date.now()-started,requestSize:String(requestBody||'').length,responseSize:String(responseBody||'').length});
    });
    return originalSend.apply(this,arguments);
   };
@@ -951,7 +955,11 @@ class MainActivity : Activity() {
                     item.optString("responseBody", ""),
                     item.optString("contentType", ""),
                     item.optString("captureState", "PARCIAL"),
-                    item.optString("note", "Captura recibida desde instrumentación JavaScript.")
+                    item.optString("note", "Captura recibida desde instrumentación JavaScript."),
+                    item.optLong("durationMs", -1L),
+                    item.optInt("requestSize", -1),
+                    item.optInt("responseSize", -1),
+                    item.optString("initiatorOrigin", "")
                 )
             } catch (_: Exception) {
                 captureBridgeErrors++
@@ -963,7 +971,9 @@ class MainActivity : Activity() {
         kind: String, method: String, url: String, status: Int,
         requestHeaders: String, requestBody: String,
         responseHeaders: String, responseBody: String,
-        contentType: String, captureState: String, note: String
+        contentType: String, captureState: String, note: String,
+        durationMs: Long = -1L, requestSize: Int = -1, responseSize: Int = -1,
+        initiatorOrigin: String = ""
     ) {
         if (!scanEnabled) return
         if (!url.startsWith("http://") && !url.startsWith("https://")) return
@@ -975,6 +985,10 @@ class MainActivity : Activity() {
             .put("timestamp", stamp).put("url", safeUrl).put("method", method.uppercase())
             .put("status", status).put("kind", kind).put("contentType", contentType)
             .put("bodyType", classifyContentType(contentType))
+            .put("durationMs", durationMs)
+            .put("requestSizeCaptured", requestSize)
+            .put("responseSizeCaptured", responseSize)
+            .put("initiatorOrigin", sanitizeUrlForStorage(initiatorOrigin))
             .put("requestHeaders", cleanSensitiveText(requestHeaders).take(12000))
             .put("requestBody", cleanSensitiveText(requestBody).take(16000))
             .put("responseHeaders", cleanSensitiveText(responseHeaders).take(12000))
@@ -1011,6 +1025,10 @@ class MainActivity : Activity() {
                 append("Estado HTTP: ").append(if (detail.optInt("status") > 0) detail.optInt("status") else "No disponible").append("\n")
                 append("Tipo: ").append(detail.optString("contentType", "desconocido")).append("\n")
                 append("Formato: ").append(detail.optString("bodyType", "DESCONOCIDO")).append("\n")
+                append("Duración: ").append(if (detail.optLong("durationMs", -1L) >= 0) "${detail.optLong("durationMs")} ms" else "No disponible").append("\n")
+                append("Tamaño enviado capturado: ").append(if (detail.optInt("requestSizeCaptured", -1) >= 0) "${detail.optInt("requestSizeCaptured")} caracteres" else "No disponible").append("\n")
+                append("Tamaño recibido capturado: ").append(if (detail.optInt("responseSizeCaptured", -1) >= 0) "${detail.optInt("responseSizeCaptured")} caracteres" else "No disponible").append("\n")
+                append("Origen iniciador: ").append(detail.optString("initiatorOrigin").ifBlank { "No disponible" }).append("\n")
                 append("Captura: ").append(detail.optString("captureState", "parcial")).append("\n")
                 append(detail.optString("note", ""))
             }
