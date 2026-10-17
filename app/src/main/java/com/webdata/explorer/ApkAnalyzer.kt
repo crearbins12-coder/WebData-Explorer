@@ -239,8 +239,8 @@ object ApkAnalyzer {
      */
     private fun findEndpointContexts(listings: List<String>): List<String> {
         val results = linkedSetOf<String>()
-        val urlRegex = Regex("""https?://[^\s\\"'<>\\\\]+""", RegexOption.IGNORE_CASE)
-        val pathRegex = Regex("""/(?:api|v[0-9]+|graphql|rest|auth|oauth|portalCore|wp-json)/[^\s\\"'<>\\\\]{1,180}""", RegexOption.IGNORE_CASE)
+        val urlRegex = Regex("""https?://[^\s\"'<>\\]+""", RegexOption.IGNORE_CASE)
+        val pathRegex = Regex("""/(?:api|v[0-9]+|graphql|rest|auth|oauth|portalCore|wp-json)/[^\s\"'<>\\]{1,180}""", RegexOption.IGNORE_CASE)
         for (listing in listings) {
             var className = "(clase no identificada)"
             var methodName = "(método no identificado)"
@@ -254,7 +254,8 @@ object ApkAnalyzer {
                 } else if (trimmed == ".end method") {
                     methodName = "(fuera de método)"
                 }
-                val matches = (urlRegex.findAll(line).map { it.value } + pathRegex.findAll(line).map { it.value })\n                    .map { it.trimEnd('.', ',', ';', ')', ']', '}') }.toList()
+                val matches = (urlRegex.findAll(line).map { it.value } + pathRegex.findAll(line).map { it.value })
+                    .map { it.trimEnd('.', ',', ';', ')', ']', '}') }.toList()
                 for (match in matches) {
                     results.add("Clase: $className\nMétodo: $methodName\nLiteral: $match\nInstrucción: $trimmed")
                     if (results.size >= 1000) return results.toList()
