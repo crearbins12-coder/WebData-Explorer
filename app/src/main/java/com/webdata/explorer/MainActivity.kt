@@ -700,12 +700,21 @@ class MainActivity : Activity() {
                 addView(browserControls)
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
             addView(browser, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-            addView(TextView(this@MainActivity).apply {
-                text = "SOLICITUDES DE RED · FILTROS"
-                textSize = 12f
-                setTextColor(Color.rgb(120, 210, 170))
-                setPadding(dp(4), dp(5), dp(4), dp(3))
-            })
+            var requestsExpanded = false
+            val requestsToggle = Button(this@MainActivity).apply {
+                text = "▴  MOSTRAR SOLICITUDES DE RED"
+                textSize = 11f
+                setOnClickListener {
+                    requestsExpanded = !requestsExpanded
+                    text = if (requestsExpanded) "▾  OCULTAR SOLICITUDES DE RED" else "▴  MOSTRAR SOLICITUDES DE RED"
+                    requestListScroll.visibility = if (requestsExpanded) View.VISIBLE else View.GONE
+                    requestFiltersScroll.visibility = if (requestsExpanded) View.VISIBLE else View.GONE
+                    requestListScroll.layoutParams = (requestListScroll.layoutParams as LinearLayout.LayoutParams).apply {
+                        height = if (requestsExpanded) dp(190) else 0
+                    }
+                }
+            }
+            addView(requestsToggle, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42)))
             val filters = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
             listOf("TODAS", "API", "VIDEO", "JS", "ERRORES", "ANTI-BOT").forEach { filter ->
                 filters.addView(Button(this@MainActivity).apply {
@@ -716,12 +725,19 @@ class MainActivity : Activity() {
                     setOnClickListener { requestFilter = filter; refreshRequestText() }
                 }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)))
             }
-            addView(HorizontalScrollView(this@MainActivity).apply {
+            val requestFiltersScroll = HorizontalScrollView(this@MainActivity).apply {
                 isHorizontalScrollBarEnabled = false
+                visibility = View.GONE
                 addView(filters)
-            })
-            addView(ScrollView(this@MainActivity).apply { addView(requestText) },
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(125)))
+            }
+            addView(requestFiltersScroll)
+            val requestListScroll = ScrollView(this@MainActivity).apply {
+                visibility = View.GONE
+                addView(requestText)
+            }
+            addView(requestListScroll, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0
+            ))
         }
         contentFrame = FrameLayout(this)
         contentFrame.addView(resultScroll, FrameLayout.LayoutParams(
