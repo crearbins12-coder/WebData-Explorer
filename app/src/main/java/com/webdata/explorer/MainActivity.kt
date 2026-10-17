@@ -62,6 +62,7 @@ class MainActivity : Activity() {
     private var activeTabIndex = -1
     private var switchingTab = false
     @Volatile private var scanEnabled = true
+    @Volatile private var excludeNoisyResources = false
     @Volatile private var captureEventsReceived = 0
     @Volatile private var captureBridgeErrors = 0
     private val sessionLock = Any()
@@ -273,6 +274,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        excludeNoisyResources = getSharedPreferences("webdata_settings", Context.MODE_PRIVATE).getBoolean("exclude_noisy_resources", false)
         window.statusBarColor = Color.rgb(15, 18, 28)
         window.navigationBarColor = Color.rgb(15, 18, 28)
         window.decorView.setBackgroundColor(Color.rgb(15, 18, 28))
@@ -830,6 +832,7 @@ class MainActivity : Activity() {
     private fun addRequest(line: String) {
         if (!scanEnabled) return
         val safeLine = Regex("""https?://[^\s]+""", RegexOption.IGNORE_CASE).replace(line) { sanitizeUrlForStorage(it.value) }
+        if (excludeNoisyResources && shouldExcludeNoisyResource(safeLine)) return
         var changed = false
         synchronized(requestLog) {
             // HashSet evita recorrer todo el historial por cada solicitud capturada.
@@ -1153,6 +1156,7 @@ class MainActivity : Activity() {
     ) {
         if (!scanEnabled) return
         if (!url.startsWith("http://") && !url.startsWith("https://")) return
+        if (excludeNoisyResources && shouldExcludeNoisyResource(url)) return
         val stamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.US).format(java.util.Date())
         val safeUrl = sanitizeUrlForStorage(url)
         val statusLabel = if (status > 0) "HTTP $status" else "HTTP ?"
@@ -1446,6 +1450,15 @@ class MainActivity : Activity() {
         browser.loadDataWithBaseURL("https://webdata.test/", html, "text/html", "UTF-8", "https://webdata.test/")
     }
 
+    private fun shouldExcludeNoisyResource(raw: String): Boolean {
+        val url = raw.substringAfter("] ", raw).substringBefore(" ·").substringBefore("?").substringBefore("#").lowercase()
+        val path = url.substringBefore(" ")
+        val image = listOf(".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".avif", ".ico").any { path.endsWith(it) }
+        val segment = listOf(".ts", ".m4s", ".cmfv", ".cmfa", ".aac", ".m4a").any { path.endsWith(it) } ||
+            path.contains("/segment") || path.contains("/chunk") || path.contains("/seg-")
+        return image || segment
+    }
+
     private fun showSettings() {
         val prefs = getSharedPreferences("webdata_settings", Context.MODE_PRIVATE)
         val choices = arrayOf("4 KB — mínimo", "12 KB — recomendado", "24 KB — respuestas más largas")
@@ -1459,10 +1472,10 @@ class MainActivity : Activity() {
                 dialog.dismiss()
                 toast("Límite aplicado a la próxima navegación")
             }
-            .setNeutralButton("BORRAR SESIONES") { _, _ ->
-                val files = sessionDirectory().listFiles { f -> f.isFile && f.extension == "json" }.orEmpty()
-                files.forEach { it.delete() }
-                toast("Sesiones guardadas eliminadas")
+            .setNeutralButton(if (excludeNoisyResources) "INCLUIR IMÁGENES/SEGMENTOS" else "EXCLUIR IMÁGENES/SEGMENTOS") { _, _ ->
+                excludeNoisyResources = !excludeNoisyResources
+                prefs.edit().putBoolean("exclude_noisy_resources", excludeNoisyResources).apply()
+                toast(if (excludeNoisyResources) "Se omiten imágenes y segmentos en nuevas capturas" else "Se registran imágenes y segmentos")
             }
             .setNegativeButton("CERRAR", null)
             .show()
@@ -1484,6 +1497,7 @@ class MainActivity : Activity() {
             appendLine("WebView inicializado: ${::browser.isInitialized}")
             appendLine("Instrumentación document-start: ${if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) "disponible en este WebView" else "no disponible; se usa instalación posterior cuando es posible"}")
             appendLine("Escaneo: ${if (scanEnabled) "activo" else "pausado"}")
+            appendLine("Excluir imágenes/segmentos: ${if (excludeNoisyResources) "activado" else "desactivado"}")
             appendLine("Solicitudes visibles: ${snapshot.size}")
             appendLine("Registros con estado HTTP: $statuses")
             appendLine("Cuerpos de respuesta disponibles: $bodies")
