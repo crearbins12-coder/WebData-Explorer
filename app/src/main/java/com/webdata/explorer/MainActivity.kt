@@ -608,6 +608,8 @@ class MainActivity : Activity() {
                 control("DIAGNÓSTICO") { showDiagnostics() }
                 control("PRUEBA CAPTURA") { runCaptureTest() }
                 control("EXPORTAR CSV") { exportRequestsCsv() }
+                control("API") { showApiEndpoints() }
+                control("MULTIMEDIA") { showMediaRequests() }
             }
             addView(browserControls)
             addView(browser, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -1117,6 +1119,99 @@ class MainActivity : Activity() {
         updateSection()
         android.app.AlertDialog.Builder(this).setTitle("Detalle de solicitud").setView(layout).setPositiveButton("Cerrar", null).show()
     }
+    private fun showApiEndpoints() {
+        val snapshot = synchronized(requestLog) { requestLog.toList() }
+        val endpoints = mutableMapOf<String, MutableList<Pair<String, org.json.JSONObject?>>>()
+        snapshot.forEach { line ->
+            val detail = requestDetails[line]
+            val url = detail?.optString("url").orEmpty().ifBlank {
+                Regex("""https?://[^\s]+""", RegexOption.IGNORE_CASE).find(line)?.value.orEmpty()
+            }
+            if (url.isBlank()) return@forEach
+            val uri = runCatching { URI(url) }.getOrNull()
+            val path = uri?.path.orEmpty()
+            val isApi = path.contains("/api/", true) || path.contains("graphql", true) ||
+                path.contains("/ajax/", true) || detail?.optString("kind").orEmpty().contains("FETCH", true) ||
+                detail?.optString("kind").orEmpty().contains("XHR", true) ||
+                detail?.optString("contentType").orEmpty().contains("json", true)
+            if (!isApi) return@forEach
+            val method = detail?.optString("method").orEmpty().ifBlank { line.substringAfter("· ").substringBefore(" ·") }
+            val key = "$method ${uri?.host.orEmpty()}$path"
+            endpoints.getOrPut(key) { mutableListOf() }.add(line to detail)
+        }
+        if (endpoints.isEmpty()) {
+            toast("Todavía no se detectaron endpoints API en esta sesión")
+            return
+        }
+        val rows = endpoints.entries.sortedBy { it.key }.map { (key, items) ->
+            val latest = items.last()
+            val d = latest.second
+            val code = d?.optInt("status", 0)?.takeIf { it > 0 }?.toString() ?: "HTTP ?"
+            val body = d?.optString("responseBody").orEmpty()
+            val keys = if (body.isNotBlank() && (d?.optString("bodyType") == "JSON" || body.trimStart().startsWith("{") || body.trimStart().startsWith("["))) {
+                extractJsonKeys(body).take(12).joinToString(", ").ifBlank { "JSON sin claves detectables" }
+            } else "respuesta no disponible/no JSON"
+            "$key · $code · ${items.size} registro(s)\n  $keys" to latest.first
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Endpoints observados (${rows.size})")
+            .setItems(rows.map { it.first.take(240) }.toTypedArray()) { _, which ->
+                val line = rows.getOrNull(which)?.second ?: return@setItems
+                if (requestDetails.containsKey(line)) showRequestDetails(line)
+                else toast("Solo se observó la URL; no hay detalles de respuesta capturados")
+            }
+            .setPositiveButton("CERRAR", null)
+            .show()
+    }
+
+    private fun extractJsonKeys(raw: String): List<String> {
+        val found = linkedSetOf<String>()
+        fun visit(value: Any?, depth: Int) {
+            if (depth > 4 || found.size >= 80) return
+            when (value) {
+                is org.json.JSONObject -> {
+                    val iterator = value.keys()
+                    while (iterator.hasNext() && found.size < 80) {
+                        val key = iterator.next()
+                        found.add(key)
+                        visit(value.opt(key), depth + 1)
+                    }
+                }
+                is org.json.JSONArray -> if (value.length() > 0) visit(value.opt(0), depth + 1)
+            }
+        }
+        runCatching {
+            val trimmed = raw.trimStart()
+            if (trimmed.startsWith("{")) visit(org.json.JSONObject(raw), 0)
+            else if (trimmed.startsWith("[")) visit(org.json.JSONArray(raw), 0)
+        }
+        return found.toList()
+    }
+
+    private fun showMediaRequests() {
+        val snapshot = synchronized(requestLog) { requestLog.toList() }
+        val media = snapshot.filter { line ->
+            val lower = line.lowercase()
+            classifyRequest(lower) == "MEDIO?" || lower.contains(".m3u8") || lower.contains(".mpd") ||
+                lower.contains(".mp4") || lower.contains(".webm") || lower.contains(".ts") ||
+                lower.contains("manifest") || lower.contains("videoplayback") ||
+                lower.contains("kind=media")
+        }.asReversed()
+        if (media.isEmpty()) {
+            toast("No se detectaron recursos multimedia en la sesión actual")
+            return
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Recursos multimedia (${media.size})")
+            .setItems(media.take(200).map { displayRequestLine(it).take(240) }.toTypedArray()) { _, which ->
+                val line = media.getOrNull(which) ?: return@setItems
+                if (requestDetails.containsKey(line)) showRequestDetails(line)
+                else toast("URL multimedia detectada; no se capturó el cuerpo del recurso")
+            }
+            .setPositiveButton("CERRAR", null)
+            .show()
+    }
+
     private fun runCaptureTest() {
         if (!::browser.isInitialized) return
         showBrowser()
