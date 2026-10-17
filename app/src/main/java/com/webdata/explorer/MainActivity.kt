@@ -34,6 +34,8 @@ import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import java.net.HttpURLConnection
 import java.io.ByteArrayInputStream
+import java.io.File
+import java.util.UUID
 import java.net.URI
 import java.net.URL
 import java.util.concurrent.Executors
@@ -61,6 +63,10 @@ class MainActivity : Activity() {
     @Volatile private var scanEnabled = true
     @Volatile private var captureEventsReceived = 0
     @Volatile private var captureBridgeErrors = 0
+    private val sessionLock = Any()
+    private var currentSessionId = UUID.randomUUID().toString()
+    private var currentSessionUrl = ""
+    private var currentSessionStartedAt = System.currentTimeMillis()
 
     private val networkInstrumentationScript = """(function(){
  try {
@@ -411,6 +417,13 @@ class MainActivity : Activity() {
                 }
             }
             webViewClient = object : WebViewClient() {
+                override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                    super.onPageStarted(view, url, favicon)
+                    if (!url.isNullOrBlank() && (url.startsWith("https://") || url.startsWith("http://"))) {
+                        startCaptureSession(url)
+                    }
+                }
+
                 override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
                     if (request != null) {
                         val url = request.url.toString()
@@ -436,7 +449,6 @@ class MainActivity : Activity() {
                         if (url.startsWith("http://") || url.startsWith("https://")) {
                             // Cada navegación principal inicia un registro nuevo: no mezclar
                             // las solicitudes de la página anterior con la página actual.
-                            if (request.isForMainFrame) clearRequestLogForNewPage()
                             val kind = classifyRequest(url)
                             val reqHeaders = request.requestHeaders.entries.joinToString("\n") { it.key + ": " + it.value }
                             addDetailedRequest(
@@ -610,6 +622,7 @@ class MainActivity : Activity() {
                 control("EXPORTAR CSV") { exportRequestsCsv() }
                 control("API") { showApiEndpoints() }
                 control("MULTIMEDIA") { showMediaRequests() }
+                control("SESIONES") { showSavedSessions() }
             }
             addView(browserControls)
             addView(browser, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -836,6 +849,106 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun startCaptureSession(url: String) {
+        saveCurrentSession()
+        clearRequestLogForNewPage()
+        currentSessionId = UUID.randomUUID().toString()
+        currentSessionUrl = sanitizeUrlForStorage(url)
+        currentSessionStartedAt = System.currentTimeMillis()
+    }
+
+    private fun sessionDirectory(): File = File(filesDir, "webdata_sessions").apply { mkdirs() }
+
+    private fun saveCurrentSession() {
+        val snapshot = synchronized(requestLog) { requestLog.toList().takeLast(300) }
+        if (snapshot.isEmpty()) return
+        val detailsArray = org.json.JSONArray()
+        synchronized(requestDetails) {
+            snapshot.forEach { line ->
+                val item = org.json.JSONObject().put("line", line)
+                requestDetails[line]?.let { item.put("detail", org.json.JSONObject(it.toString())) }
+                detailsArray.put(item)
+            }
+        }
+        val session = org.json.JSONObject()
+            .put("id", currentSessionId)
+            .put("name", runCatching { URI(currentSessionUrl).host }.getOrNull().orEmpty().ifBlank { "Análisis web" })
+            .put("url", currentSessionUrl)
+            .put("startedAt", currentSessionStartedAt)
+            .put("savedAt", System.currentTimeMillis())
+            .put("requestCount", snapshot.size)
+            .put("requests", detailsArray)
+        synchronized(sessionLock) {
+            runCatching {
+                val target = File(sessionDirectory(), "$currentSessionId.json")
+                val temp = File(sessionDirectory(), "$currentSessionId.tmp")
+                temp.writeText(session.toString(), Charsets.UTF_8)
+                if (!temp.renameTo(target)) {
+                    target.writeText(session.toString(), Charsets.UTF_8)
+                    temp.delete()
+                }
+                sessionDirectory().listFiles { f -> f.isFile && f.extension == "json" }
+                    ?.sortedByDescending { it.lastModified() }
+                    ?.drop(20)?.forEach { it.delete() }
+            }
+        }
+    }
+
+    private fun showSavedSessions() {
+        val files = synchronized(sessionLock) {
+            sessionDirectory().listFiles { f -> f.isFile && f.extension == "json" }
+                ?.sortedByDescending { it.lastModified() }?.toList().orEmpty()
+        }
+        if (files.isEmpty()) {
+            toast("Todavía no hay sesiones guardadas. Navegá y luego cambiá de página o cerrá la app.")
+            return
+        }
+        val sessions = files.mapNotNull { file ->
+            runCatching { file to org.json.JSONObject(file.readText(Charsets.UTF_8)) }.getOrNull()
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Sesiones guardadas (${sessions.size})")
+            .setItems(sessions.map { (_, item) ->
+                val date = java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale.getDefault()).format(java.util.Date(item.optLong("startedAt")))
+                "$date · ${item.optString("name")} · ${item.optInt("requestCount")} solicitudes"
+            }.toTypedArray()) { _, which ->
+                val selected = sessions.getOrNull(which) ?: return@setItems
+                showSavedSessionRequests(selected.first, selected.second)
+            }
+            .setNeutralButton("BORRAR HISTORIAL") { _, _ ->
+                synchronized(sessionLock) { files.forEach { it.delete() } }
+                toast("Sesiones guardadas eliminadas")
+            }
+            .setNegativeButton("CERRAR", null)
+            .show()
+    }
+
+    private fun showSavedSessionRequests(file: File, session: org.json.JSONObject) {
+        val requests = session.optJSONArray("requests") ?: org.json.JSONArray()
+        val entries = (0 until requests.length()).mapNotNull { index ->
+            requests.optJSONObject(index)?.let { it.optString("line") to it.optJSONObject("detail") }
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle(session.optString("name", "Sesión") + " · ${entries.size} solicitudes")
+            .setItems(entries.map { it.first.take(220) }.toTypedArray()) { _, which ->
+                val entry = entries.getOrNull(which) ?: return@setItems
+                val detail = entry.second
+                if (detail != null) showRequestDetails(entry.first, detail)
+                else toast("En esta solicitud solo se guardó la URL observada")
+            }
+            .setNeutralButton("EXPORTAR JSON") { _, _ ->
+                pendingExport = session.toString(2)
+                val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "application/json"
+                    putExtra(Intent.EXTRA_TITLE, "webdata-sesion-${file.nameWithoutExtension.take(12)}.json")
+                }
+                startActivityForResult(intent, exportRequestCode)
+            }
+            .setNegativeButton("VOLVER", null)
+            .show()
+    }
+
     private fun clearRequestLogForNewPage() {
         mainHandler.removeCallbacks(saveRequestLogRunnable)
         mainHandler.removeCallbacks(refreshRequestTextRunnable)
@@ -1029,8 +1142,8 @@ class MainActivity : Activity() {
         addRequest(line)
     }
 
-    private fun showRequestDetails(line: String) {
-        val detail = requestDetails[line] ?: run {
+    private fun showRequestDetails(line: String, detailOverride: org.json.JSONObject? = null) {
+        val detail = detailOverride ?: requestDetails[line] ?: run {
             toast("Esta solicitud solo tiene URL; WebView no expuso más datos")
             return
         }
@@ -1680,11 +1793,13 @@ class MainActivity : Activity() {
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
 
     override fun onPause() {
+        saveCurrentSession()
         if (::browser.isInitialized) CookieManager.getInstance().flush()
         super.onPause()
     }
 
     override fun onDestroy() {
+        saveCurrentSession()
         mainHandler.removeCallbacks(requestPollRunnable)
         if (::browser.isInitialized) CookieManager.getInstance().flush()
         executor.shutdownNow()
