@@ -124,6 +124,7 @@ object ApkAnalyzer {
                         allUrls.addAll(dexResult.endpoints.filter { it.startsWith("http://") || it.startsWith("https://") })
                         endpointPaths.addAll(dexResult.endpoints.filterNot { it.startsWith("http://") || it.startsWith("https://") })
                         libraries.addAll(dexResult.libraries)
+                        interesting.addAll(dexResult.strings.filter { it.length in 4..350 })
                         val strings = printableStrings(bytes)
                         strings.forEach { value ->
                             URL_REGEX.findAll(value).forEach { match ->
@@ -149,7 +150,7 @@ object ApkAnalyzer {
         report.appendLine("Llamadas invoke detectadas: ${dexResults.sumOf { it.invokeCount }}")
         dexResults.mapNotNull { it.warning }.forEach { report.appendLine("Aviso: $it") }
         report.appendLine("Muestra de instrucciones tipo Smali (límite de salida):")
-        dexResults.firstOrNull()?.listing?.take(30000)?.let { report.appendLine(it) }
+        dexResults.joinToString("\n\n") { it.listing }.take(30000).takeIf { it.isNotBlank() }?.let { report.appendLine(it) }
         if (dexResults.isEmpty()) report.appendLine("No se pudo analizar ningún DEX dentro del límite configurado.")
 
         report.appendLine()
