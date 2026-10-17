@@ -56,6 +56,7 @@ class MainActivity : Activity() {
     private var lastReport = ""
     private var browserMode = false
     private var requestFilter = "TODAS"
+    private var requestSearchQuery = ""
     private var pendingExport = ""
     private val exportRequestCode = 4501
     private val browserTabs = mutableListOf<String>()
@@ -718,6 +719,19 @@ class MainActivity : Activity() {
             }
             addView(requestsToggle, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42)))
             val filters = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
+            filters.addView(Button(this@MainActivity).apply {
+                text = "🔎 BUSCAR TEXTO"
+                setOnClickListener { showRequestSearchDialog() }
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)))
+            filters.addView(Button(this@MainActivity).apply {
+                text = "LIMPIAR"
+                setOnClickListener {
+                    requestSearchQuery = ""
+                    requestFilter = "TODAS"
+                    refreshRequestText()
+                    toast("Filtros limpiados")
+                }
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)))
             listOf("TODAS", "API", "VIDEO", "JS", "ERRORES", "ANTI-BOT").forEach { filter ->
                 filters.addView(Button(this@MainActivity).apply {
                     text = filter
@@ -1128,6 +1142,7 @@ class MainActivity : Activity() {
 
     private fun matchesFilter(line: String): Boolean {
         val lower = line.lowercase()
+        if (requestSearchQuery.isNotBlank() && !lower.contains(requestSearchQuery.lowercase())) return false
         return when (requestFilter) {
             "API" -> lower.contains("[api?]") || lower.contains("/api/") || lower.contains("graphql") || lower.contains("/ajax/")
             "VIDEO" -> lower.contains("[medio?]") || listOf(".m3u8", ".mpd", ".mp4", ".m4v", ".webm", ".ts").any { lower.substringBefore("?").contains(it) }
@@ -1138,6 +1153,30 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun showRequestSearchDialog() {
+        val input = EditText(this).apply {
+            hint = "URL, dominio, método, código HTTP…"
+            setSingleLine(true)
+            setText(requestSearchQuery)
+            setSelection(text.length)
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Buscar en solicitudes")
+            .setMessage("Busca coincidencias en las líneas registradas. No vuelve a consultar el sitio.")
+            .setView(input)
+            .setPositiveButton("Buscar") { _, _ ->
+                requestSearchQuery = input.text.toString().trim()
+                refreshRequestText()
+                toast(if (requestSearchQuery.isBlank()) "Búsqueda vacía" else "Filtro aplicado")
+            }
+            .setNeutralButton("Limpiar") { _, _ ->
+                requestSearchQuery = ""
+                refreshRequestText()
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
     private fun refreshRequestText() {
         val snapshot = synchronized(requestLog) { requestLog.toList() }
         val filtered = snapshot.filter { matchesFilter(it) }.asReversed().take(300)
@@ -1145,7 +1184,8 @@ class MainActivity : Activity() {
             requestText.text = "Todavía no se observaron solicitudes. Abrí una página o recargala."
             return
         }
-        val out = SpannableStringBuilder("Filtro: $requestFilter · ${filtered.size}/${snapshot.size} solicitudes (máximo 300)\n\n")
+        val searchLabel = if (requestSearchQuery.isBlank()) "" else " · búsqueda: \"$requestSearchQuery\""
+        val out = SpannableStringBuilder("Filtro: $requestFilter$searchLabel · ${filtered.size}/${snapshot.size} solicitudes (máximo 300)\n\n")
         filtered.forEachIndexed { index, line ->
             val start = out.length
             out.append(displayRequestLine(line))
