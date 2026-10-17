@@ -2169,7 +2169,7 @@ class MainActivity : Activity() {
             .put("generatedAt", java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", java.util.Locale.US).format(java.util.Date()))
             .put("analysisMode", "static-read-only")
             .put("findingsAreVerified", false)
-            .put("reportHeader", report.lineSequence().takeWhile { !it.startsWith("=== ") }.joinToString("\\n").trim())
+            .put("reportHeader", report.lineSequence().takeWhile { !it.startsWith("=== ") }.joinToString("\n").trim())
             .put("sections", sections)
             .put("urls", urls)
             .put("possibleApiPaths", paths)
