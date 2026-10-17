@@ -166,7 +166,7 @@ class MainActivity : Activity() {
      var responseBodyPromise=clone?textResponse(clone,ct):Promise.resolve({body:'',state:'PARCIAL',note:'No se pudo clonar la respuesta sin alterar la solicitud original.'});
      Promise.all([reqBodyPromise,responseBodyPromise]).then(function(values) {
       var rb=values[1];
-      record({kind:'FETCH',method:String(method).toUpperCase(),url:url,status:response.status,requestHeaders:reqHeaders,requestBody:values[0],responseHeaders:headersText(response.headers),responseBody:rb.body,contentType:ct,captureState:rb.state,note:rb.note,durationMs:Date.now()-started,requestSize:String(values[0]||'').length,responseSize:String(rb.body||'').length});
+      record({kind:'FETCH',method:String(method).toUpperCase(),url:url,responseUrl:response.url,redirected:response.redirected,status:response.status,requestHeaders:reqHeaders,requestBody:values[0],responseHeaders:headersText(response.headers),responseBody:rb.body,contentType:ct,captureState:rb.state,note:rb.note,durationMs:Date.now()-started,requestSize:String(values[0]||'').length,responseSize:String(rb.body||'').length});
      }).catch(function(){record({kind:'FETCH',method:String(method).toUpperCase(),url:url,status:response.status,requestHeaders:reqHeaders,requestBody:'',responseHeaders:headersText(response.headers),responseBody:'',contentType:ct,captureState:'PARCIAL',note:'No se pudo leer el cuerpo de la respuesta.'});});
      return response;
     },function(error) {
@@ -203,7 +203,7 @@ class MainActivity : Activity() {
       else { responseBody=''; note='Cuerpo omitido: tipo de respuesta no textual.'; }
      }
     } catch(e) { responseBody=''; note='El navegador no permitió leer el cuerpo: '+String(e); }
-    record({kind:'XHR',method:String(xhr.__wdxMethod||'GET').toUpperCase(),url:xhr.__wdxUrl||'',status:xhr.status||0,requestHeaders:redact((xhr.__wdxReqHeaders||[]).join('\n')),requestBody:requestBody,responseHeaders:redact(headers),responseBody:responseBody,contentType:ct,captureState:state,note:note||'Cuerpo capturado desde XMLHttpRequest cuando fue accesible.',durationMs:Date.now()-started,requestSize:String(requestBody||'').length,responseSize:String(responseBody||'').length});
+    record({kind:'XHR',method:String(xhr.__wdxMethod||'GET').toUpperCase(),url:xhr.__wdxUrl||'',responseUrl:xhr.responseURL||xhr.__wdxUrl||'',redirected:!!(xhr.responseURL&&xhr.responseURL!==new URL(xhr.__wdxUrl,location.href).href),status:xhr.status||0,requestHeaders:redact((xhr.__wdxReqHeaders||[]).join('\n')),requestBody:requestBody,responseHeaders:redact(headers),responseBody:responseBody,contentType:ct,captureState:state,note:note||'Cuerpo capturado desde XMLHttpRequest cuando fue accesible.',durationMs:Date.now()-started,requestSize:String(requestBody||'').length,responseSize:String(responseBody||'').length});
    });
    return originalSend.apply(this,arguments);
   };
@@ -1048,6 +1048,25 @@ class MainActivity : Activity() {
         ) { it.groupValues[1] + "[REDACTADO]" }
     }
 
+    private fun classifyResource(url: String, contentType: String): String {
+        val path = url.substringBefore("?").substringBefore("#").lowercase()
+        val type = contentType.substringBefore(";").lowercase()
+        return when {
+            path.endsWith(".m3u8") || type.contains("mpegurl") -> "MANIFIESTO HLS"
+            path.endsWith(".mpd") || type.contains("dash+xml") -> "MANIFIESTO MPEG-DASH"
+            listOf(".ts", ".m4s", ".cmfv", ".cmfa", ".aac", ".m4a").any { path.endsWith(it) } || path.contains("/segment") || path.contains("/chunk") -> "SEGMENTO MULTIMEDIA"
+            type.startsWith("video/") || type.startsWith("audio/") || listOf(".mp4", ".webm", ".mov", ".m4v", ".mp3", ".ogg", ".wav").any { path.endsWith(it) } -> "AUDIO/VIDEO"
+            type.startsWith("image/") || listOf(".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".avif").any { path.endsWith(it) } -> "IMAGEN"
+            type.contains("font") || listOf(".woff", ".woff2", ".ttf", ".otf").any { path.endsWith(it) } -> "FUENTE"
+            type.contains("javascript") || path.endsWith(".js") -> "JAVASCRIPT"
+            type.contains("css") || path.endsWith(".css") -> "CSS"
+            type.contains("html") || path.endsWith(".html") -> "HTML"
+            type.contains("json") || path.contains("/api/") || path.contains("graphql") -> "API/JSON"
+            type.startsWith("text/") || type.contains("xml") -> "TEXTO/XML"
+            else -> "OTRO"
+        }
+    }
+
     private fun classifyContentType(raw: String): String {
         val type = raw.substringBefore(";").trim().lowercase()
         return when {
@@ -1113,7 +1132,9 @@ class MainActivity : Activity() {
                     item.optLong("durationMs", -1L),
                     item.optInt("requestSize", -1),
                     item.optInt("responseSize", -1),
-                    item.optString("initiatorOrigin", "")
+                    item.optString("initiatorOrigin", ""),
+                    item.optString("responseUrl", ""),
+                    item.optBoolean("redirected", false)
                 )
             } catch (_: Exception) {
                 captureBridgeErrors++
@@ -1127,7 +1148,7 @@ class MainActivity : Activity() {
         responseHeaders: String, responseBody: String,
         contentType: String, captureState: String, note: String,
         durationMs: Long = -1L, requestSize: Int = -1, responseSize: Int = -1,
-        initiatorOrigin: String = ""
+        initiatorOrigin: String = "", responseUrl: String = "", redirected: Boolean = false
     ) {
         if (!scanEnabled) return
         if (!url.startsWith("http://") && !url.startsWith("https://")) return
@@ -1143,6 +1164,9 @@ class MainActivity : Activity() {
             .put("requestSizeCaptured", requestSize)
             .put("responseSizeCaptured", responseSize)
             .put("initiatorOrigin", sanitizeUrlForStorage(initiatorOrigin))
+            .put("responseUrl", sanitizeUrlForStorage(responseUrl))
+            .put("redirected", redirected)
+            .put("resourceType", classifyResource(url, contentType))
             .put("requestHeaders", cleanSensitiveText(requestHeaders).take(12000))
              .put("requestBody", cleanSensitiveText(requestBody).take(32000))
             .put("responseHeaders", cleanSensitiveText(responseHeaders).take(12000))
@@ -1183,6 +1207,8 @@ class MainActivity : Activity() {
                 append("Tamaño enviado capturado: ").append(if (detail.optInt("requestSizeCaptured", -1) >= 0) "${detail.optInt("requestSizeCaptured")} caracteres" else "No disponible").append("\n")
                 append("Tamaño recibido capturado: ").append(if (detail.optInt("responseSizeCaptured", -1) >= 0) "${detail.optInt("responseSizeCaptured")} caracteres" else "No disponible").append("\n")
                 append("Origen iniciador: ").append(detail.optString("initiatorOrigin").ifBlank { "No disponible" }).append("\n")
+                append("Categoría: ").append(detail.optString("resourceType", "No clasificada")).append("\n")
+                if (detail.optBoolean("redirected")) append("Redirección observada a: ").append(detail.optString("responseUrl")).append("\n")
                 append("Captura: ").append(detail.optString("captureState", "parcial")).append("\n")
                 append(detail.optString("note", ""))
             }
