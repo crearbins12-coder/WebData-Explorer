@@ -47,11 +47,12 @@ class MainActivity : Activity() {
     private val browserTabs = mutableListOf<String>()
     private var activeTabIndex = -1
     private var switchingTab = false
+    private var scanEnabled = true
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val requestPollRunnable = object : Runnable {
         override fun run() {
-            if (!browserMode || !::browser.isInitialized) return
+            if (!browserMode || !scanEnabled || !::browser.isInitialized) return
             browser.evaluateJavascript(
                 """(function(){
                     try {
@@ -394,6 +395,7 @@ class MainActivity : Activity() {
                 control("FAV.") { showSavedPages(true) }
                 control("+ PESTAÑA") { newBrowserTab() }
                 control("PESTAÑAS") { showBrowserTabs() }
+                control("PAUSAR SCAN") { toggleScan() }
             }
             addView(browserControls)
             addView(browser, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -557,6 +559,28 @@ class MainActivity : Activity() {
         statusText.text = "Modo analizador HTML"
     }
 
+    private fun toggleScan() {
+        scanEnabled = !scanEnabled
+        val controls = (browser.tag as? ViewGroup)?.getChildAt(0) as? ViewGroup
+        if (controls != null) {
+            for (i in 0 until controls.childCount) {
+                val item = controls.getChildAt(i)
+                if (item is Button && (item.text.toString() == "PAUSAR SCAN" || item.text.toString() == "ACTIVAR SCAN")) {
+                    item.text = if (scanEnabled) "PAUSAR SCAN" else "ACTIVAR SCAN"
+                }
+            }
+        }
+        if (scanEnabled && browserMode) {
+            statusText.text = "Escaneo activado · capturando solicitudes"
+            mainHandler.removeCallbacks(requestPollRunnable)
+            mainHandler.postDelayed(requestPollRunnable, 500)
+        } else {
+            mainHandler.removeCallbacks(requestPollRunnable)
+            statusText.text = "Escaneo pausado · la navegación sigue activa"
+        }
+        toast(if (scanEnabled) "Escaneo activado" else "Escaneo pausado")
+    }
+
     private fun classifyRequest(raw: String): String {
         val lower = raw.lowercase()
         return when {
@@ -574,6 +598,7 @@ class MainActivity : Activity() {
     private val refreshRequestTextRunnable = Runnable { if (::requestText.isInitialized) refreshRequestText() }
 
     private fun addRequest(line: String) {
+        if (!scanEnabled) return
         var changed = false
         synchronized(requestLog) {
             // HashSet evita recorrer todo el historial por cada solicitud capturada.
