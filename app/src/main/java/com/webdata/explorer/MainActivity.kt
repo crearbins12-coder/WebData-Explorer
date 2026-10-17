@@ -60,6 +60,8 @@ class MainActivity : Activity() {
 
     private val networkInstrumentationScript = """(function(){
  try {
+  // Solo instrumenta el documento principal; no modifica iframes de terceros.
+  if (window.top !== window) return JSON.stringify({resources:[],media:[],network:[]});
   if (window.__wdxInstalled) return JSON.stringify({resources:performance.getEntriesByType('resource').map(function(e){return e.name;}),media:[],network:[]});
   window.__wdxInstalled=true; window.__wdxNet=[]; window.__wdxNetCursor=0;
   var LIMIT=12000;
