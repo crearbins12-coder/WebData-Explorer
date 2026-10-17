@@ -7,6 +7,12 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Color
 import android.view.ViewGroup
+import android.view.View
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -23,7 +29,13 @@ class MainActivity : Activity() {
     private lateinit var urlInput: EditText
     private lateinit var statusText: TextView
     private lateinit var resultText: TextView
+    private lateinit var browser: WebView
+    private lateinit var requestText: TextView
+    private lateinit var resultScroll: ScrollView
+    private lateinit var contentFrame: FrameLayout
+    private val requestLog = java.util.Collections.synchronizedList(mutableListOf<String>())
     private var lastReport = ""
+    private var browserMode = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -68,14 +80,26 @@ class MainActivity : Activity() {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply { topMargin = dp(10) })
 
+        val navButtons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        navButtons.addView(Button(this).apply {
+            text = "NAVEGADOR"
+            setOnClickListener { showBrowser() }
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        navButtons.addView(Button(this).apply {
+            text = "ANALIZADOR"
+            setOnClickListener { showAnalyzer() }
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        root.addView(navButtons)
+
         root.addView(Button(this).apply {
-            text = "COPIAR INFORME"
+            text = "COPIAR INFORME / SOLICITUDES"
             setOnClickListener {
-                if (lastReport.isBlank()) toast("Primero analizá una página")
+                val text = if (browserMode) requestLog.joinToString("\\n") else lastReport
+                if (text.isBlank()) toast("Todavía no hay datos para copiar")
                 else {
                     val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    clipboard.setPrimaryClip(ClipData.newPlainText("WebData Explorer", lastReport))
-                    toast("Informe copiado")
+                    clipboard.setPrimaryClip(ClipData.newPlainText("WebData Explorer", text))
+                    toast("Copiado al portapapeles")
                 }
             }
         })
@@ -96,12 +120,138 @@ class MainActivity : Activity() {
             setPadding(dp(12), dp(12), dp(12), dp(18))
             setBackgroundColor(Color.rgb(25, 29, 41))
         }
-        val scroll = ScrollView(this)
-        scroll.addView(resultText)
-        root.addView(scroll, LinearLayout.LayoutParams(
+        resultScroll = ScrollView(this).apply { addView(resultText) }
+        browser = WebView(this).apply {
+            visibility = View.GONE
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            settings.loadsImagesAutomatically = true
+            webViewClient = object : WebViewClient() {
+                override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
+                    if (request != null) {
+                        val url = request.url.toString()
+                        if (url.startsWith("http://") || url.startsWith("https://")) {
+                            val kind = classifyRequest(url)
+                            addRequest("${request.method} [$kind] ${if (request.isForMainFrame) "[PÁGINA]" else "[RECURSO]"} $url")
+                        }
+                    }
+                    return null
+                }
+
+                override fun onReceivedHttpError(view: WebView?, request: WebResourceRequest?, errorResponse: WebResourceResponse?) {
+                    if (request != null) addRequest("HTTP ${errorResponse?.statusCode ?: "?"} ${request.method} ${request.url}")
+                }
+
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    super.onPageFinished(view, url)
+                    statusText.text = "Navegación terminada · registrando recursos…"
+                    view?.evaluateJavascript(
+                        "(function(){return JSON.stringify(performance.getEntriesByType('resource').map(function(e){return e.name;}));})()"
+                    ) { value ->
+                        runCatching {
+                            val decoded = org.json.JSONTokener(value).nextValue() as? String ?: "[]"
+                            val arr = org.json.JSONArray(decoded)
+                            for (i in 0 until arr.length()) {
+                                val item = arr.optString(i)
+                                if (item.startsWith("http://") || item.startsWith("https://")) addRequest("RECURSO DOM [${classifyRequest(item)}] $item")
+                            }
+                        }
+                        runOnUiThread {
+                            refreshRequestText()
+                            statusText.text = "Navegador listo · ${requestLog.size} solicitudes observadas"
+                        }
+                    }
+                }
+            }
+        }
+        requestText = TextView(this).apply {
+            text = "Las solicitudes observadas aparecerán acá."
+            textSize = 11f
+            setTextColor(Color.rgb(230, 233, 240))
+            setTextIsSelectable(true)
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+        }
+        val browserPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            addView(browser, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            addView(TextView(this@MainActivity).apply {
+                text = "SOLICITUDES DE RED (registro limitado)"
+                textSize = 12f
+                setTextColor(Color.rgb(120, 210, 170))
+                setPadding(dp(4), dp(5), dp(4), dp(3))
+            })
+            addView(ScrollView(this@MainActivity).apply { addView(requestText) },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(145)))
+        }
+        contentFrame = FrameLayout(this)
+        contentFrame.addView(resultScroll, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+        contentFrame.addView(browserPanel, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+        root.addView(contentFrame, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
         ).apply { topMargin = dp(6) })
         setContentView(root)
+        browser.tag = browserPanel
+    }
+
+    private fun showBrowser() {
+        browserMode = true
+        resultScroll.visibility = View.GONE
+        (browser.tag as? View)?.visibility = View.VISIBLE
+        statusText.text = "Navegador integrado · solicitudes HTTP observadas"
+        var raw = urlInput.text.toString().trim()
+        if (raw.isBlank()) { toast("Pegá una URL primero"); return }
+        if (!raw.startsWith("http://") && !raw.startsWith("https://")) raw = "https://$raw"
+        val parsed = runCatching { URL(raw) }.getOrNull()
+        if (parsed == null || (parsed.protocol != "http" && parsed.protocol != "https")) {
+            toast("La URL no es válida"); return
+        }
+        urlInput.setText(raw)
+        requestLog.clear()
+        refreshRequestText()
+        browser.loadUrl(raw)
+    }
+
+    private fun showAnalyzer() {
+        browserMode = false
+        (browser.tag as? View)?.visibility = View.GONE
+        resultScroll.visibility = View.VISIBLE
+        statusText.text = "Modo analizador HTML"
+    }
+
+    private fun classifyRequest(raw: String): String {
+        val lower = raw.lowercase()
+        return when {
+            lower.contains("/api/") || lower.contains("graphql") || lower.contains("/ajax/") -> "API?"
+            listOf(".m3u8", ".mpd", ".mp4", ".m4v", ".webm", ".ts").any { lower.substringBefore("?").endsWith(it) } -> "MEDIO?"
+            lower.substringBefore("?").endsWith(".js") -> "JS"
+            lower.substringBefore("?").endsWith(".css") -> "CSS"
+            lower.substringBefore("?").matches(Regex(".*\\.(png|jpg|jpeg|webp|gif|svg|avif)$")) -> "IMAGEN"
+            else -> "WEB"
+        }
+    }
+
+    private fun addRequest(line: String) {
+        synchronized(requestLog) {
+            if (!requestLog.contains(line)) {
+                requestLog.add(line)
+                if (requestLog.size > 300) requestLog.removeAt(0)
+            }
+        }
+        runOnUiThread { refreshRequestText() }
+    }
+
+    private fun refreshRequestText() {
+        val snapshot = synchronized(requestLog) { requestLog.toList() }
+        requestText.text = if (snapshot.isEmpty()) {
+            "Todavía no se observaron solicitudes. Abrí una página o recargala."
+        } else {
+            "Total: ${snapshot.size} (máximo 300)\\n\\n" + snapshot.asReversed().joinToString("\\n")
+        }
     }
 
     private fun analyze() {
@@ -311,6 +461,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         executor.shutdownNow()
+        browser.destroy()
         super.onDestroy()
     }
 }
