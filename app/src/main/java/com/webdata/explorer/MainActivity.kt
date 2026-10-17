@@ -11,6 +11,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.text.SpannableStringBuilder
 import android.text.Spanned
+import android.text.style.BackgroundColorSpan
 import android.text.TextPaint
 import android.text.method.LinkMovementMethod
 import android.text.style.ClickableSpan
@@ -1248,7 +1249,34 @@ class MainActivity : Activity() {
         }
         tabs.addView(tabRow)
         layout.addView(tabs)
-        layout.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(300)))
+        val searchRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val searchInput = EditText(this).apply {
+            hint = "Buscar en esta sección"
+            textSize = 13f
+            setSingleLine(true)
+        }
+        searchRow.addView(searchInput, LinearLayout.LayoutParams(0, dp(48), 1f))
+        searchRow.addView(Button(this).apply {
+            text = "BUSCAR"
+            setOnClickListener {
+                val query = searchInput.text.toString()
+                val raw = sectionText(selected)
+                val found = if (query.isBlank()) -1 else raw.indexOf(query, ignoreCase = true)
+                if (found < 0) {
+                    toast(if (query.isBlank()) "Escribí un texto para buscar" else "No se encontró ese texto en esta sección")
+                } else {
+                    val highlighted = SpannableStringBuilder(raw)
+                    highlighted.setSpan(BackgroundColorSpan(Color.YELLOW), found, found + query.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    content.text = highlighted
+                    scroll.post {
+                        val line = content.layout?.getLineForOffset(found) ?: 0
+                        scroll.smoothScrollTo(0, content.layout?.getLineTop(line) ?: 0)
+                    }
+                }
+            }
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)))
+        layout.addView(searchRow)
+        layout.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(280)))
         val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         actions.addView(Button(this).apply {
             text = "COPIAR SECCIÓN"
