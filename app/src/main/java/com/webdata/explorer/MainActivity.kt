@@ -192,16 +192,19 @@ class MainActivity : Activity() {
                 setPadding(dp(4), dp(5), dp(4), dp(3))
             })
             val filters = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
-            listOf("TODAS", "API", "VIDEO", "JS", "ERRORES").forEach { filter ->
+            listOf("TODAS", "API", "VIDEO", "JS", "ERRORES", "ANTI-BOT").forEach { filter ->
                 filters.addView(Button(this@MainActivity).apply {
                     text = filter
                     textSize = 9f
-                    minWidth = 0
-                    setPadding(dp(2), 0, dp(2), 0)
+                    minWidth = dp(64)
+                    setPadding(dp(5), 0, dp(5), 0)
                     setOnClickListener { requestFilter = filter; refreshRequestText() }
-                }, LinearLayout.LayoutParams(0, dp(40), 1f))
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)))
             }
-            addView(filters)
+            addView(HorizontalScrollView(this@MainActivity).apply {
+                isHorizontalScrollBarEnabled = false
+                addView(filters)
+            })
             addView(ScrollView(this@MainActivity).apply { addView(requestText) },
                 LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(125)))
         }
@@ -247,6 +250,7 @@ class MainActivity : Activity() {
     private fun classifyRequest(raw: String): String {
         val lower = raw.lowercase()
         return when {
+            isAntiBotUrl(lower) -> "ANTI-BOT"
             lower.contains("/api/") || lower.contains("graphql") || lower.contains("/ajax/") -> "API?"
             listOf(".m3u8", ".mpd", ".mp4", ".m4v", ".webm", ".ts").any { lower.substringBefore("?").endsWith(it) } -> "MEDIO?"
             lower.substringBefore("?").endsWith(".js") -> "JS"
@@ -272,7 +276,8 @@ class MainActivity : Activity() {
             "API" -> lower.contains("[api?]") || lower.contains("/api/") || lower.contains("graphql") || lower.contains("/ajax/")
             "VIDEO" -> lower.contains("[medio?]") || listOf(".m3u8", ".mpd", ".mp4", ".m4v", ".webm", ".ts").any { lower.substringBefore("?").contains(it) }
             "JS" -> lower.contains("[js]") || lower.substringBefore("?").endsWith(".js")
-            "ERRORES" -> lower.startsWith("http ") || lower.contains(" error ") || lower.contains("failed")
+            "ERRORES" -> lower.startsWith("http ") || lower.contains(" error ") || lower.contains("failed") || Regex("""http\s+[45]\d\d""").containsMatchIn(lower)
+            "ANTI-BOT" -> isAntiBotUrl(lower)
             else -> true
         }
     }
@@ -284,7 +289,22 @@ class MainActivity : Activity() {
             "Todavía no se observaron solicitudes. Abrí una página o recargala."
         } else {
             "Filtro: $requestFilter · ${filtered.size}/${snapshot.size} solicitudes (máximo 300)\n\n" +
-                filtered.joinToString("\n\n")
+                filtered.joinToString("\n\n") { displayRequestLine(it) }
+        }
+    }
+
+    private fun isAntiBotUrl(value: String): Boolean {
+        val lower = value.lowercase()
+        return listOf("cloudflare", "/cdn-cgi/", "turnstile", "challenge-platform", "chl_page", "/pat/", "/fo/", "/ci/", "brunhild.challenges").any { lower.contains(it) }
+    }
+
+    // Sólo acorta la vista; el registro original y la exportación JSON conservan la URL completa.
+    private fun displayRequestLine(line: String): String {
+        val urlRegex = Regex("""https?://[^\s]+""", RegexOption.IGNORE_CASE)
+        return urlRegex.replace(line) { match ->
+            val url = match.value
+            if (url.length > 220 && isAntiBotUrl(url)) url.take(180) + "… [URL anti-bot extensa, " + url.length + " caracteres]"
+            else url
         }
     }
 
