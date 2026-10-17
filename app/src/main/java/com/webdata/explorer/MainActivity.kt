@@ -1298,6 +1298,10 @@ class MainActivity : Activity() {
                 startActivityForResult(intent, exportRequestCode)
             }
         }, LinearLayout.LayoutParams(0, dp(44), 1f))
+        actions.addView(Button(this).apply {
+            text = "COMPARAR"
+            setOnClickListener { showResponseComparison(line, detail) }
+        }, LinearLayout.LayoutParams(0, dp(44), 1f))
         layout.addView(actions)
         updateSection()
         android.app.AlertDialog.Builder(this).setTitle("Detalle de solicitud").setView(layout).setPositiveButton("Cerrar", null).show()
@@ -1513,6 +1517,67 @@ class MainActivity : Activity() {
             }
             .setPositiveButton("CERRAR", null)
             .show()
+    }
+
+    private fun showResponseComparison(currentLine: String, current: org.json.JSONObject) {
+        val currentUrl = runCatching { URI(current.optString("url")) }.getOrNull()
+        val currentMethod = current.optString("method")
+        val candidates = synchronized(requestLog) { requestLog.toList() }.filter { it != currentLine }.mapNotNull { line ->
+            val detail = requestDetails[line] ?: return@mapNotNull null
+            val uri = runCatching { URI(detail.optString("url")) }.getOrNull()
+            if (detail.optString("method") == currentMethod && uri?.host == currentUrl?.host &&
+                uri?.path == currentUrl?.path && detail.optString("responseBody").isNotBlank()) line to detail else null
+        }
+        if (candidates.isEmpty()) {
+            toast("No hay otra respuesta capturada para comparar en este endpoint")
+            return
+        }
+        val recent = candidates.asReversed().take(100)
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Comparar con otra respuesta")
+            .setItems(recent.map { (_, detail) ->
+                "${detail.optString("timestamp")} · HTTP ${detail.optInt("status")} · ${detail.optString("responseBody").length} caracteres"
+            }.toTypedArray()) { _, which ->
+                val selected = recent.getOrNull(which)?.second ?: return@setItems
+                val left = current.optString("responseBody")
+                val right = selected.optString("responseBody")
+                val comparison = compareResponseBodies(left, right)
+                val view = TextView(this).apply {
+                    text = "ACTUAL: ${current.optString("timestamp")} · HTTP ${current.optInt("status")}\n" +
+                        "COMPARADA: ${selected.optString("timestamp")} · HTTP ${selected.optInt("status")}\n\n$comparison"
+                    textSize = 12f
+                    setTextIsSelectable(true)
+                    setPadding(dp(14), dp(12), dp(14), dp(12))
+                }
+                android.app.AlertDialog.Builder(this)
+                    .setTitle("Diferencias de respuesta")
+                    .setView(ScrollView(this).apply { addView(view) })
+                    .setPositiveButton("CERRAR", null)
+                    .show()
+            }
+            .setNegativeButton("CANCELAR", null)
+            .show()
+    }
+
+    private fun compareResponseBodies(first: String, second: String): String {
+        val a = runCatching { org.json.JSONObject(first) }.getOrNull()
+        val b = runCatching { org.json.JSONObject(second) }.getOrNull()
+        if (a == null || b == null) {
+            if (first == second) return "Los cuerpos de texto son idénticos."
+            val limit = 4000
+            return "Los cuerpos difieren o no son objetos JSON.\n\n--- RESPUESTA A ---\n${first.take(limit)}\n\n--- RESPUESTA B ---\n${second.take(limit)}"
+        }
+        val keys = (a.keys().asSequence().toList() + b.keys().asSequence().toList()).distinct().sorted()
+        val changes = keys.filter { a.opt(it)?.toString() != b.opt(it)?.toString() }
+        if (changes.isEmpty()) return "Los objetos JSON tienen las mismas claves y valores."
+        return buildString {
+            appendLine("Claves diferentes: ${changes.size}")
+            changes.forEach { key ->
+                appendLine("• $key")
+                appendLine("  A: ${a.opt(key)?.toString()?.take(500) ?: "[ausente]"}")
+                appendLine("  B: ${b.opt(key)?.toString()?.take(500) ?: "[ausente]"}")
+            }
+        }
     }
 
     private fun isAntiBotUrl(value: String): Boolean {
