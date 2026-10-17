@@ -786,15 +786,129 @@ class MainActivity : Activity() {
 
     private fun refreshRequestText() {
         val snapshot = synchronized(requestLog) { requestLog.toList() }
-        val filtered = snapshot.filter { matchesFilter(it) }.asReversed()
-        requestText.text = if (snapshot.isEmpty()) {
-            "Todavía no se observaron solicitudes. Abrí una página o recargala."
-        } else {
-            "Filtro: $requestFilter · ${filtered.size}/${snapshot.size} solicitudes (máximo 300)\n\n" +
-                filtered.joinToString("\n\n") { displayRequestLine(it) }
+        val filtered = snapshot.filter { matchesFilter(it) }.asReversed().take(300)
+        if (snapshot.isEmpty()) {
+            requestText.text = "Todavía no se observaron solicitudes. Abrí una página o recargala."
+            return
         }
+        val out = SpannableStringBuilder("Filtro: $requestFilter · ${filtered.size}/${snapshot.size} solicitudes (máximo 300)\n\n")
+        filtered.forEachIndexed { index, line ->
+            val start = out.length
+            out.append(displayRequestLine(line))
+            val end = out.length
+            if (requestDetails.containsKey(line)) {
+                out.setSpan(object : ClickableSpan() {
+                    override fun onClick(widget: View) = showRequestDetails(line)
+                    override fun updateDrawState(ds: TextPaint) {
+                        ds.color = Color.rgb(120, 190, 255)
+                        ds.isUnderlineText = true
+                    }
+                }, start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+            if (index != filtered.lastIndex) out.append("\n\n")
+        }
+        requestText.text = out
     }
 
+    private fun cleanSensitiveText(raw: String): String {
+        var value = raw
+        value = value.replace(Regex("(?i)(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|secret)(\\s*[:=]\\s*)([^\\r\\n,;&]+)")) { m ->
+            m.groupValues[1] + m.groupValues[2] + "[REDACTADO]"
+        }
+        value = value.replace(Regex("(?i)(\\\"(?:password|passwd|token|access_token|refresh_token|api_key|secret|authorization|cookie)\\\"\\s*:\\s*\\\")[^\\\"]*(\\\")"), "$1[REDACTADO]$2")
+        return value
+    }
+
+    private fun addDetailedRequest(
+        kind: String, method: String, url: String, status: Int,
+        requestHeaders: String, requestBody: String,
+        responseHeaders: String, responseBody: String,
+        contentType: String, captureState: String, note: String
+    ) {
+        if (!url.startsWith("http://") && !url.startsWith("https://")) return
+        val stamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.US).format(java.util.Date())
+        val statusLabel = if (status > 0) "HTTP $status" else "HTTP ?"
+        val line = "$stamp · ${method.uppercase()} · $statusLabel · [$kind/${classifyRequest(url)}] $url"
+        val detail = org.json.JSONObject()
+            .put("timestamp", stamp).put("url", url).put("method", method.uppercase())
+            .put("status", status).put("kind", kind).put("contentType", contentType)
+            .put("requestHeaders", cleanSensitiveText(requestHeaders).take(12000))
+            .put("requestBody", cleanSensitiveText(requestBody).take(16000))
+            .put("responseHeaders", cleanSensitiveText(responseHeaders).take(12000))
+            .put("responseBody", cleanSensitiveText(responseBody).take(16000))
+            .put("captureState", captureState).put("note", note)
+        requestDetails[line] = detail
+        addRequest(line)
+    }
+
+    private fun showRequestDetails(line: String) {
+        val detail = requestDetails[line] ?: run {
+            toast("Esta solicitud solo tiene URL; WebView no expuso más datos")
+            return
+        }
+        val labels = arrayOf("Resumen", "Encabezados solicitud", "Cuerpo enviado", "Encabezados respuesta", "Cuerpo recibido")
+        val keys = arrayOf("", "requestHeaders", "requestBody", "responseHeaders", "responseBody")
+        var selected = 0
+        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(8), dp(12), dp(4)) }
+        val tabs = HorizontalScrollView(this)
+        val tabRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val content = TextView(this).apply { textSize = 12f; setTextIsSelectable(true); setPadding(dp(8), dp(8), dp(8), dp(8)) }
+        val scroll = ScrollView(this).apply { addView(content) }
+        fun sectionText(index: Int): String {
+            if (index == 0) return buildString {
+                append("URL: ").append(detail.optString("url")).append("\n")
+                append("Método: ").append(detail.optString("method")).append("\n")
+                append("Fecha: ").append(detail.optString("timestamp")).append("\n")
+                append("Estado HTTP: ").append(if (detail.optInt("status") > 0) detail.optInt("status") else "No disponible").append("\n")
+                append("Tipo: ").append(detail.optString("contentType", "desconocido")).append("\n")
+                append("Captura: ").append(detail.optString("captureState", "parcial")).append("\n")
+                append(detail.optString("note", ""))
+            }
+            val raw = detail.optString(keys[index], "")
+            if (raw.isNotBlank()) return raw
+            return when (index) {
+                1 -> "Encabezados no disponibles: la solicitud no fue observada por instrumentación JavaScript o WebView no los expuso."
+                2 -> "Cuerpo enviado no disponible. WebView no ofrece el cuerpo de solicitudes de recursos en shouldInterceptRequest; para JavaScript solo se capturan cuerpos de texto accesibles."
+                3 -> "Encabezados de respuesta no disponibles para esta solicitud."
+                else -> "Cuerpo recibido no disponible. WebView no expone directamente el cuerpo de respuestas desde shouldInterceptRequest; el navegador solo permite leer algunas respuestas fetch/XHR accesibles."
+            }
+        }
+        fun updateSection() { content.text = sectionText(selected) }
+        labels.forEachIndexed { index, label ->
+            tabRow.addView(Button(this).apply {
+                text = label
+                textSize = 10f
+                setOnClickListener { selected = index; updateSection() }
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(42)))
+        }
+        tabs.addView(tabRow)
+        layout.addView(tabs)
+        layout.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(300)))
+        val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        actions.addView(Button(this).apply {
+            text = "COPIAR SECCIÓN"
+            setOnClickListener {
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText(labels[selected], sectionText(selected)))
+                toast("Sección copiada")
+            }
+        }, LinearLayout.LayoutParams(0, dp(44), 1f))
+        actions.addView(Button(this).apply {
+            text = "GUARDAR JSON"
+            setOnClickListener {
+                pendingExport = detail.toString(2)
+                val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "application/json"
+                    putExtra(Intent.EXTRA_TITLE, "webdata-detalle-solicitud.json")
+                }
+                startActivityForResult(intent, exportRequestCode)
+            }
+        }, LinearLayout.LayoutParams(0, dp(44), 1f))
+        layout.addView(actions)
+        updateSection()
+        android.app.AlertDialog.Builder(this).setTitle("Detalle de solicitud").setView(layout).setPositiveButton("Cerrar", null).show()
+    }
     private fun isAntiBotUrl(value: String): Boolean {
         val lower = value.lowercase()
         return listOf("cloudflare", "/cdn-cgi/", "turnstile", "challenge-platform", "chl_page", "/pat/", "/fo/", "/ci/", "brunhild.challenges").any { lower.contains(it) }
