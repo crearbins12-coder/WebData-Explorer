@@ -1076,6 +1076,17 @@ class MainActivity : Activity() {
         fun getBodyLimit(): Int = getSharedPreferences("webdata_settings", Context.MODE_PRIVATE).getInt("body_limit", 12000).coerceIn(4096, 24576)
 
         @JavascriptInterface
+        fun getTestStatus(): String {
+            val details = synchronized(requestDetails) { requestDetails.values.map { org.json.JSONObject(it.toString()) } }
+            val getOk = details.any { it.optString("url").contains("/__wdx_test_api/get") && it.optInt("status") == 200 && it.optString("responseBody").contains("knownValue") }
+            val postOk = details.any { it.optString("url").contains("/__wdx_test_api/post") && it.optString("method") == "POST" && it.optInt("status") == 200 }
+            val postBody = details.any { it.optString("url").contains("/__wdx_test_api/post") && it.optString("requestBody").contains("POST_BODY_CAPTURED") }
+            return org.json.JSONObject().put("getCaptured", getOk).put("postCaptured", postOk)
+                .put("postBodyCaptured", postBody).put("captureEvents", captureEventsReceived)
+                .put("bridgeErrors", captureBridgeErrors).toString()
+        }
+
+        @JavascriptInterface
         fun postCapture(payload: String?) {
             if (!scanEnabled || payload.isNullOrBlank()) return
             if (payload.length > 48_000) {
@@ -1350,12 +1361,23 @@ class MainActivity : Activity() {
                 var postPayload={probe:'POST_BODY_CAPTURED',value:42};
                 var postResponse=await fetch('/__wdx_test_api/post',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(postPayload)});
                 var postJson=await postResponse.json();
+                var nativeStatus={getCaptured:false,postCaptured:false,postBodyCaptured:false};
+                for(var attempt=0;attempt<8;attempt++){
+                  await new Promise(function(resolve){setTimeout(resolve,250);});
+                  try { nativeStatus=JSON.parse(window.WebDataCapture.getTestStatus()); } catch(e) {}
+                  if(nativeStatus.getCaptured && nativeStatus.postCaptured && nativeStatus.postBodyCaptured) break;
+                }
+                var pass=getResponse.status===200 && postResponse.status===200 &&
+                  getJson.knownValue===42 && postJson.knownValue===42 &&
+                  nativeStatus.getCaptured && nativeStatus.postCaptured && nativeStatus.postBodyCaptured;
                 out.textContent=JSON.stringify({
                   get:{status:getResponse.status,body:getJson},
                   post:{status:postResponse.status,sent:postPayload,body:postJson},
-                  pageStillWorking:true
+                  nativeCapture:nativeStatus,
+                  pageStillWorking:true,
+                  acceptance:pass?'PASS':'PARTIAL/FAIL'
                 },null,2);
-                document.body.setAttribute('data-test-result','PASS');
+                document.body.setAttribute('data-test-result',pass?'PASS':'FAIL');
               } catch(e) {
                 out.textContent='FALLO DE PRUEBA: '+String(e);
                 document.body.setAttribute('data-test-result','FAIL');
