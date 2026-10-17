@@ -261,7 +261,12 @@ class MainActivity : Activity() {
                             // las solicitudes de la página anterior con la página actual.
                             if (request.isForMainFrame) clearRequestLogForNewPage()
                             val kind = classifyRequest(url)
-                            addRequest("${request.method} [$kind] ${if (request.isForMainFrame) "[PÁGINA]" else "[RECURSO]"} $url")
+                            val reqHeaders = request.requestHeaders.entries.joinToString("\n") { it.key + ": " + it.value }
+                            addDetailedRequest(
+                                "WEBVIEW", request.method, url, 0, reqHeaders, "",
+                                "", "", "", "PARCIAL",
+                                "URL y encabezados de solicitud disponibles en shouldInterceptRequest. WebView no expone aquí el cuerpo enviado ni las respuestas exitosas."
+                            )
                         }
                     }
                     return null
@@ -271,7 +276,13 @@ class MainActivity : Activity() {
                     if (request != null) {
                         val code = errorResponse?.statusCode ?: 0
                         val address = request.url.toString()
-                        addRequest("HTTP $code ${request.method} ${if (isAntiBotUrl(address.lowercase())) "[ANTI-BOT]" else ""} $address")
+                        val reqHeaders = request.requestHeaders.entries.joinToString("\n") { it.key + ": " + it.value }
+                        val respHeaders = errorResponse?.responseHeaders?.entries?.joinToString("\n") { it.key + ": " + it.value }.orEmpty()
+                        addDetailedRequest(
+                            "WEBVIEW_HTTP_ERROR", request.method, address, code, reqHeaders, "",
+                            respHeaders, "", errorResponse?.mimeType.orEmpty(), "PARCIAL",
+                            "WebView notificó un error HTTP y expuso estado/encabezados. El cuerpo de la respuesta no está disponible en onReceivedHttpError."
+                        )
                         if (request.isForMainFrame && code in listOf(403, 429, 503)) {
                             runOnUiThread {
                                 statusText.text = when (code) {
@@ -761,6 +772,7 @@ class MainActivity : Activity() {
                 if (requestLog.size > 500) {
                     val removed = requestLog.removeAt(0)
                     requestKeys.remove(removed)
+                    requestDetails.remove(removed)
                 }
                 changed = true
             }
@@ -880,6 +892,7 @@ class MainActivity : Activity() {
         responseHeaders: String, responseBody: String,
         contentType: String, captureState: String, note: String
     ) {
+        if (!scanEnabled) return
         if (!url.startsWith("http://") && !url.startsWith("https://")) return
         val stamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.US).format(java.util.Date())
         val statusLabel = if (status > 0) "HTTP $status" else "HTTP ?"
