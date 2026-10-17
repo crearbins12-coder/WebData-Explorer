@@ -2,6 +2,7 @@ package com.webdata.explorer
 
 import android.content.Context
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.content.pm.PackageManager
 import android.os.Build
 import java.io.File
@@ -17,6 +18,13 @@ object ApkAnalyzer {
     private const val MAX_REPORT_ITEMS = 250
 
     fun analyze(context: Context, uri: Uri): String {
+        val originalName = runCatching {
+            context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { cursor ->
+                    if (cursor.moveToFirst()) cursor.getString(cursor.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME))
+                    else null
+                }
+        }.getOrNull()?.takeIf { it.isNotBlank() } ?: "APK seleccionado"
         val temp = File.createTempFile("wdx-apk-", ".apk", context.cacheDir)
         try {
             val input = context.contentResolver.openInputStream(uri)
@@ -37,16 +45,17 @@ object ApkAnalyzer {
                 }
             }
             require(temp.length() > 0) { "El archivo está vacío." }
-            return inspectFile(context, temp)
+            return inspectFile(context, temp, originalName)
         } finally {
             temp.delete()
         }
     }
 
-    private fun inspectFile(context: Context, apk: File): String {
+    private fun inspectFile(context: Context, apk: File, originalName: String): String {
         val report = StringBuilder()
         report.appendLine("WEB DATA EXPLORER · ANALIZADOR APK")
-        report.appendLine("Archivo: ${apk.name}")
+        report.appendLine("Archivo original: $originalName")
+        report.appendLine("Archivo temporal de análisis: ${apk.name}")
         report.appendLine("Tamaño: ${apk.length() / 1024} KiB")
         report.appendLine("Modo: análisis local de solo lectura")
         report.appendLine()
