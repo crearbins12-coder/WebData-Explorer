@@ -701,6 +701,8 @@ class MainActivity : Activity() {
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
             addView(browser, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
             var requestsExpanded = false
+            lateinit var requestListScroll: ScrollView
+            lateinit var requestFiltersScroll: HorizontalScrollView
             val requestsToggle = Button(this@MainActivity).apply {
                 text = "▴  MOSTRAR SOLICITUDES DE RED"
                 textSize = 11f
@@ -725,13 +727,13 @@ class MainActivity : Activity() {
                     setOnClickListener { requestFilter = filter; refreshRequestText() }
                 }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)))
             }
-            val requestFiltersScroll = HorizontalScrollView(this@MainActivity).apply {
+            requestFiltersScroll = HorizontalScrollView(this@MainActivity).apply {
                 isHorizontalScrollBarEnabled = false
                 visibility = View.GONE
                 addView(filters)
             }
             addView(requestFiltersScroll)
-            val requestListScroll = ScrollView(this@MainActivity).apply {
+            requestListScroll = ScrollView(this@MainActivity).apply {
                 visibility = View.GONE
                 addView(requestText)
             }
