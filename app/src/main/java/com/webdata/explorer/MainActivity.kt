@@ -1259,11 +1259,24 @@ class MainActivity : Activity() {
         fun getBodyLimit(): Int = getSharedPreferences("webdata_settings", Context.MODE_PRIVATE).getInt("body_limit", 12000).coerceIn(4096, 24576)
 
         @JavascriptInterface
-        fun getTestStatus(): String {
+        fun getTestStatus(runId: String?): String {
+            val runMarker = "run=" + (runId ?: "")
             val details = synchronized(requestDetails) { requestDetails.values.map { org.json.JSONObject(it.toString()) } }
-            val getOk = details.any { it.optString("url").contains("/__wdx_test_api/get") && it.optInt("status") == 200 && it.optString("responseBody").contains("knownValue") }
-            val postOk = details.any { it.optString("url").contains("/__wdx_test_api/post") && it.optString("method") == "POST" && it.optInt("status") == 200 }
-            val postBody = details.any { it.optString("url").contains("/__wdx_test_api/post") && it.optString("requestBody").contains("POST_BODY_CAPTURED") }
+            val getOk = details.any {
+                it.optString("url").contains("/__wdx_test_api/get") &&
+                    it.optString("url").contains(runMarker) && it.optInt("status") == 200 &&
+                    it.optString("responseBody").contains("knownValue")
+            }
+            val postOk = details.any {
+                it.optString("url").contains("/__wdx_test_api/post") &&
+                    it.optString("url").contains(runMarker) && it.optString("method") == "POST" &&
+                    it.optInt("status") == 200
+            }
+            val postBody = details.any {
+                it.optString("url").contains("/__wdx_test_api/post") &&
+                    it.optString("url").contains(runMarker) &&
+                    it.optString("requestBody").contains("POST_BODY_CAPTURED")
+            }
             return org.json.JSONObject().put("getCaptured", getOk).put("postCaptured", postOk)
                 .put("postBodyCaptured", postBody).put("captureEvents", captureEventsReceived)
                 .put("bridgeErrors", captureBridgeErrors).toString()
@@ -1707,16 +1720,18 @@ class MainActivity : Activity() {
             <script>
             setTimeout(async function(){
               var out=document.getElementById('out');
+              var runId=Date.now().toString()+'-'+Math.random().toString(36).slice(2);
+              var suffix='?run='+encodeURIComponent(runId);
               try {
-                var getResponse=await fetch('/__wdx_test_api/get');
+                var getResponse=await fetch('/__wdx_test_api/get'+suffix);
                 var getJson=await getResponse.json();
                 var postPayload={probe:'POST_BODY_CAPTURED',value:42};
-                var postResponse=await fetch('/__wdx_test_api/post',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(postPayload)});
+                var postResponse=await fetch('/__wdx_test_api/post'+suffix,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(postPayload)});
                 var postJson=await postResponse.json();
                 var nativeStatus={getCaptured:false,postCaptured:false,postBodyCaptured:false};
                 for(var attempt=0;attempt<8;attempt++){
                   await new Promise(function(resolve){setTimeout(resolve,250);});
-                  try { nativeStatus=JSON.parse(window.WebDataCapture.getTestStatus()); } catch(e) {}
+                  try { nativeStatus=JSON.parse(window.WebDataCapture.getTestStatus(runId)); } catch(e) {}
                   if(nativeStatus.getCaptured && nativeStatus.postCaptured && nativeStatus.postBodyCaptured) break;
                 }
                 var pass=getResponse.status===200 && postResponse.status===200 &&
