@@ -1577,6 +1577,16 @@ class MainActivity : Activity() {
                 if (requestDetails.containsKey(line)) showRequestDetails(line)
                 else toast("Solo se observó la URL; no hay detalles de respuesta capturados")
             }
+            .setNegativeButton("GUARDAR TXT") { _, _ ->
+                pendingExport = report
+                val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TITLE, "analisis-apk.txt")
+                }
+                runCatching { startActivityForResult(intent, exportRequestCode) }
+                    .onFailure { toast("No se pudo abrir el guardado: ${it.message ?: "error"}") }
+            }
             .setPositiveButton("CERRAR", null)
             .show()
     }
