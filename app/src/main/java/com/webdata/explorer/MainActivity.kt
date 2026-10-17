@@ -337,82 +337,137 @@ class MainActivity : Activity() {
                     // No resuelve ni evita desafíos de acceso.
                     view?.evaluateJavascript(
                         """(function(){
-                            try {
-                                if (!window.__wdxInstalled) {
-                                    window.__wdxInstalled = true;
-                                    window.__wdxNet = [];
-                                    var record = function(item) {
-                                        try {
-                                            item.url = new URL(String(item.url || ''), location.href).href;
-                                            item.headers = String(item.headers || '').slice(0, 5000);
-                                            item.json = String(item.json || '').slice(0, 10000);
-                                            window.__wdxNet.push(item);
-                                            if (window.__wdxNet.length > 200) window.__wdxNet.shift();
-                                        } catch(e) {}
-                                    };
-                                    var headerText = function(headers) {
-                                        var out = [];
-                                        try { headers.forEach(function(v,k){ out.push(k + ': ' + v); }); } catch(e) {}
-                                        return out.join('\n');
-                                    };
-                                    var jsonText = function(text, contentType) {
-                                        if (!/json/i.test(contentType || '')) return '';
-                                        try { JSON.parse(text); return String(text).slice(0,10000); } catch(e) { return ''; }
-                                    };
-                                    if (window.fetch) {
-                                        var originalFetch = window.fetch;
-                                        window.fetch = function(input, init) {
-                                            var url = input && input.url ? input.url : input;
-                                            var method = (init && init.method) || (input && input.method) || 'GET';
-                                            return originalFetch.apply(this, arguments).then(function(response) {
-                                                var item = {kind:'FETCH', method:method, url:url, status:response.status, headers:headerText(response.headers), json:''};
-                                                try {
-                                                    var clone = response.clone();
-                                                    var ct = clone.headers.get('content-type') || '';
-                                                    if (/json/i.test(ct)) clone.text().then(function(body){ item.json = jsonText(body,ct); record(item); }).catch(function(){ record(item); });
-                                                    else record(item);
-                                                } catch(e) { record(item); }
-                                                return response;
-                                            }, function(error) {
-                                                record({kind:'FETCH_ERROR',method:method,url:url,status:0,headers:'',json:String(error)});
-                                                throw error;
-                                            });
-                                        };
-                                    }
-                                    var originalOpen = XMLHttpRequest.prototype.open;
-                                    var originalSend = XMLHttpRequest.prototype.send;
-                                    XMLHttpRequest.prototype.open = function(method, url) {
-                                        this.__wdxMethod = method;
-                                        this.__wdxUrl = url;
-                                        return originalOpen.apply(this, arguments);
-                                    };
-                                    XMLHttpRequest.prototype.send = function() {
-                                        var xhr = this;
-                                        xhr.addEventListener('loadend', function() {
-                                            var headers = '';
-                                            var body = '';
-                                            var ct = '';
-                                            try { headers = xhr.getAllResponseHeaders() || ''; } catch(e) {}
-                                            try { ct = xhr.getResponseHeader('content-type') || ''; } catch(e) {}
-                                            try {
-                                                if (/json/i.test(ct)) {
-                                                    if (xhr.responseType === 'json') body = JSON.stringify(xhr.response);
-                                                    else if (!xhr.responseType || xhr.responseType === 'text') body = xhr.responseText || '';
-                                                    body = jsonText(body,ct);
-                                                }
-                                            } catch(e) {}
-                                            record({kind:'XHR',method:xhr.__wdxMethod || 'GET',url:xhr.__wdxUrl || '',status:xhr.status || 0,headers:headers,json:body});
-                                        });
-                                        return originalSend.apply(this, arguments);
-                                    };
-                                }
-                                var resources = performance.getEntriesByType('resource').map(function(e){return e.name;});
-                                var media = Array.prototype.slice.call(document.querySelectorAll('video, audio, source')).map(function(e){
-                                    return e.currentSrc || e.src || e.getAttribute('src') || '';
-                                }).filter(Boolean);
-                                return JSON.stringify({resources:resources, media:media, network:window.__wdxNet || []});
-                            } catch(e) { return JSON.stringify({error:String(e)}); }
-                        })()""".trimIndent()
+ try {
+  if (window.__wdxInstalled) return JSON.stringify({resources:performance.getEntriesByType('resource').map(function(e){return e.name;}),media:[],network:[]});
+  window.__wdxInstalled=true; window.__wdxNet=[]; window.__wdxNetCursor=0;
+  var LIMIT=12000;
+  function redact(s) {
+   s=String(s||'').slice(0,LIMIT);
+   s=s.replace(/(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|secret)(\s*[:=]\s*)([^\r\n,;&]+)/ig,'$1$2[REDACTADO]');
+   s=s.replace(/("(?:password|passwd|token|access_token|refresh_token|api_key|secret|authorization|cookie)"\s*:\s*")[^"]*(")/ig,'$1[REDACTADO]$2');
+   return s;
+  }
+  function headersText(headers) {
+   var out=[];
+   try { headers.forEach(function(v,k){ out.push(k+': '+(/^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|.*token.*|.*secret.*)$/i.test(k)?'[REDACTADO]':v)); }); } catch(e) {}
+   return out.join('\n').slice(0,LIMIT);
+  }
+  function readLimited(stream) {
+   if (!stream || !stream.getReader) return Promise.resolve('');
+   return new Promise(function(resolve) {
+    var reader=stream.getReader(), chunks=[], total=0, decoder=new TextDecoder();
+    function next() {
+     reader.read().then(function(part) {
+      if (part.done) { resolve(redact(chunks.join(''))); return; }
+      var bytes=part.value, remain=LIMIT-total;
+      if (remain>0) { var piece=bytes.length>remain?bytes.slice(0,remain):bytes; chunks.push(decoder.decode(piece,{stream:true})); total+=piece.length; }
+      if (bytes.length>remain || total>=LIMIT) {
+       try { reader.cancel(); } catch(e) {}
+       chunks.push('\n[TRUNCADO: límite de 12 KB]');
+       resolve(redact(chunks.join('')));
+      } else next();
+     }).catch(function(){ resolve(chunks.length?redact(chunks.join('')):'[No se pudo leer el cuerpo]'); });
+    }
+    next();
+   });
+  }
+  function safeBody(body, contentType) {
+   if (body==null) return Promise.resolve('');
+   if (typeof body==='string') return Promise.resolve(redact(body));
+   if (typeof URLSearchParams!=='undefined' && body instanceof URLSearchParams) return Promise.resolve(redact(body.toString()));
+   if (typeof FormData!=='undefined' && body instanceof FormData) return Promise.resolve('[FormData omitido por seguridad; no se registran campos/archivos automáticamente]');
+   return Promise.resolve('[Cuerpo no textual o no accesible]');
+  }
+  function record(item) {
+   try {
+    item.url=new URL(String(item.url||''),location.href).href;
+    if (!/^https?:/i.test(item.url)) return;
+    item.timestamp=new Date().toISOString();
+    item.requestHeaders=redact(item.requestHeaders||'');
+    item.requestBody=redact(item.requestBody||'');
+    item.responseHeaders=redact(item.responseHeaders||'');
+    item.responseBody=redact(item.responseBody||'');
+    item.contentType=String(item.contentType||'');
+    item.captureState=item.captureState||((item.responseBody||item.responseHeaders)?'PARCIAL':'LIMITADA');
+    item.note=item.note||'';
+    window.__wdxNet.push(item);
+    if (window.__wdxNet.length>200) window.__wdxNet.shift();
+   } catch(e) {}
+  }
+  function textResponse(clone, ct) {
+   if (!/(json|text\/|xml|javascript|html)/i.test(ct||'')) return Promise.resolve({body:'',state:'PARCIAL',note:'Cuerpo omitido: respuesta binaria o tipo no textual.'});
+   if (/^(video|audio|image)\//i.test(ct||'')) return Promise.resolve({body:'',state:'PARCIAL',note:'Cuerpo multimedia/binario omitido para evitar consumo de memoria.'});
+   return readLimited(clone.body).then(function(body){
+    var state=body.indexOf('[TRUNCADO:')>=0?'PARCIAL':'COMPLETA';
+    if (!body) return {body:'',state:'PARCIAL',note:'El cuerpo estaba vacío o el navegador no permitió leerlo.'};
+    return {body:body,state:state,note:state==='PARCIAL'?'Cuerpo limitado a 12 KB.':'Cuerpo textual leído desde una copia de la respuesta.'};
+   });
+  }
+  if (window.fetch) {
+   var originalFetch=window.fetch;
+   window.fetch=function(input,init) {
+    var url=input&&input.url?input.url:input;
+    var method=(init&&init.method)||(input&&input.method)||'GET';
+    var headers=(init&&init.headers)||(input&&input.headers);
+    var reqHeaders=headersText(new Headers(headers||{}));
+    var reqBodyPromise=Promise.resolve('');
+    var body=(init&&Object.prototype.hasOwnProperty.call(init,'body'))?init.body:null;
+    if (body!==null && body!==undefined) reqBodyPromise=safeBody(body,(new Headers(headers||{})).get('content-type')||'');
+    else if (input&&input.clone&&input.body) { try { reqBodyPromise=readLimited(input.clone().body); } catch(e) { reqBodyPromise=Promise.resolve('[Cuerpo de Request no accesible]'); } }
+    var started=Date.now();
+    return originalFetch.apply(this,arguments).then(function(response) {
+     var ct=response.headers.get('content-type')||'', clone;
+     try { clone=response.clone(); } catch(e) { clone=null; }
+     var responseBodyPromise=clone?textResponse(clone,ct):Promise.resolve({body:'',state:'PARCIAL',note:'No se pudo clonar la respuesta sin alterar la solicitud original.'});
+     Promise.all([reqBodyPromise,responseBodyPromise]).then(function(values) {
+      var rb=values[1];
+      record({kind:'FETCH',method:String(method).toUpperCase(),url:url,status:response.status,requestHeaders:reqHeaders,requestBody:values[0],responseHeaders:headersText(response.headers),responseBody:rb.body,contentType:ct,captureState:rb.state,note:rb.note});
+     }).catch(function(){record({kind:'FETCH',method:String(method).toUpperCase(),url:url,status:response.status,requestHeaders:reqHeaders,requestBody:'',responseHeaders:headersText(response.headers),responseBody:'',contentType:ct,captureState:'PARCIAL',note:'No se pudo leer el cuerpo de la respuesta.'});});
+     return response;
+    },function(error) {
+     reqBodyPromise.then(function(rb){record({kind:'FETCH_ERROR',method:String(method).toUpperCase(),url:url,status:0,requestHeaders:reqHeaders,requestBody:rb,responseHeaders:'',responseBody:'',contentType:'',captureState:'NO DISPONIBLE',note:'fetch falló: '+String(error)});});
+     throw error;
+    });
+   };
+  }
+  var originalOpen=XMLHttpRequest.prototype.open, originalSend=XMLHttpRequest.prototype.send, originalSetHeader=XMLHttpRequest.prototype.setRequestHeader;
+  XMLHttpRequest.prototype.open=function(method,url) {
+   this.__wdxMethod=method; this.__wdxUrl=url; this.__wdxReqHeaders=[];
+   return originalOpen.apply(this,arguments);
+  };
+  XMLHttpRequest.prototype.setRequestHeader=function(name,value) {
+   try { this.__wdxReqHeaders.push(name+': '+(/^(authorization|cookie|x-api-key|.*token.*|.*secret.*)$/i.test(name)?'[REDACTADO]':value)); } catch(e) {}
+   return originalSetHeader.apply(this,arguments);
+  };
+  XMLHttpRequest.prototype.send=function(body) {
+   var xhr=this, requestBody='';
+   try {
+    if (typeof body==='string' || (typeof URLSearchParams!=='undefined'&&body instanceof URLSearchParams)) requestBody=redact(body.toString());
+    else if (body!=null) requestBody='[Cuerpo no textual/FormData omitido por seguridad]';
+   } catch(e) { requestBody='[Cuerpo enviado no accesible]'; }
+   xhr.addEventListener('loadend',function() {
+    var headers='',ct='',responseBody='',state='PARCIAL',note='';
+    try { headers=xhr.getAllResponseHeaders()||''; } catch(e) {}
+    try { ct=xhr.getResponseHeader('content-type')||''; } catch(e) {}
+    try {
+     if (xhr.responseType==='json') responseBody=JSON.stringify(xhr.response);
+     else if (!xhr.responseType || xhr.responseType==='text') responseBody=xhr.responseText||'';
+     else { note='Cuerpo omitido: responseType '+xhr.responseType+' (binario o no textual).'; }
+     if (responseBody) {
+      if (/(json|text\/|xml|javascript|html)/i.test(ct)) { responseBody=redact(responseBody); state=responseBody.length>=LIMIT?'PARCIAL':'COMPLETA'; if(state==='PARCIAL')responseBody=responseBody.slice(0,LIMIT)+'\n[TRUNCADO: límite de 12 KB]'; }
+      else { responseBody=''; note='Cuerpo omitido: tipo de respuesta no textual.'; }
+     }
+    } catch(e) { responseBody=''; note='El navegador no permitió leer el cuerpo: '+String(e); }
+    record({kind:'XHR',method:String(xhr.__wdxMethod||'GET').toUpperCase(),url:xhr.__wdxUrl||'',status:xhr.status||0,requestHeaders:redact((xhr.__wdxReqHeaders||[]).join('\n')),requestBody:requestBody,responseHeaders:redact(headers),responseBody:responseBody,contentType:ct,captureState:state,note:note||'Cuerpo capturado desde XMLHttpRequest cuando fue accesible.'});
+   });
+   return originalSend.apply(this,arguments);
+  };
+  var resources=performance.getEntriesByType('resource').map(function(e){return e.name;});
+  var media=Array.prototype.slice.call(document.querySelectorAll('video,audio,source')).map(function(e){return e.currentSrc||e.src||e.getAttribute('src')||'';}).filter(Boolean);
+  var net=window.__wdxNet||[]; window.__wdxNetCursor=net.length;
+  return JSON.stringify({resources:resources,media:media,network:net});
+ } catch(e) { return JSON.stringify({error:String(e)}); }
+})()})()""".trimIndent()
                     ) { value ->
                         runCatching {
                             val decoded = org.json.JSONTokener(value).nextValue() as? String ?: "{}"
