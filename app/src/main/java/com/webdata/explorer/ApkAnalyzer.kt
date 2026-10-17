@@ -180,6 +180,17 @@ object ApkAnalyzer {
         fileEntries.forEach { report.appendLine("  • $it") }
 
         report.appendLine()
+        report.appendLine("=== ENDPOINTS Y CONTEXTO DE CÓDIGO ===")
+        val endpointContexts = findEndpointContexts(dexResults.map { it.listing })
+        report.appendLine("Coincidencias con contexto: ${endpointContexts.size}")
+        endpointContexts.take(MAX_REPORT_ITEMS).forEach { report.appendLine(it) }
+        if (endpointContexts.size > MAX_REPORT_ITEMS) report.appendLine("… resultados limitados")
+        if (endpointContexts.isEmpty()) {
+            report.appendLine("No se encontraron URLs/rutas literales en las líneas Smali conservadas.")
+            report.appendLine("Una URL puede construirse dinámicamente, estar cifrada o quedar fuera de la muestra.")
+        }
+
+        report.appendLine()
         report.appendLine("=== POSIBLES PUNTOS DE LLAMADA DE RED ===")
         report.appendLine("Referencias detectadas: ${networkCallSites.size}")
         networkCallSites.take(MAX_REPORT_ITEMS).forEach { report.appendLine(it) }
@@ -220,6 +231,39 @@ object ApkAnalyzer {
         report.appendLine("Las URLs/rutas son pistas, no endpoints confirmados. Puede perder cadenas codificadas, comprimidas o construidas en tiempo de ejecución.")
         report.appendLine("No se ejecuta ni instala el APK. La descompilación Java completa y el renderizado Smali fiel requieren una etapa adicional de integración y validación.")
         return report.toString()
+    }
+
+    /**
+     * Associates literal URL/path strings with the class and method surrounding each Smali line.
+     * This is a proximity-based static hint, not proof that a method sends a request to that URL.
+     */
+    private fun findEndpointContexts(listings: List<String>): List<String> {
+        val results = linkedSetOf<String>()
+        val urlOrPath = Regex(
+            """(?:https?://[^\\s\\"'<>\\\\]+|/(?:api|v[0-9]+|graphql|rest|auth|oauth|portalCore|wp-json)/[^\\s\\"'<>\\\\]{1,180})""",
+            RegexOption.IGNORE_CASE
+        )
+        for (listing in listings) {
+            var className = "(clase no identificada)"
+            var methodName = "(método no identificado)"
+            for (line in listing.lineSequence()) {
+                val trimmed = line.trim()
+                if (trimmed.startsWith(".class ")) {
+                    className = trimmed.substringAfterLast(' ')
+                    methodName = "(fuera de método)"
+                } else if (trimmed.startsWith(".method ")) {
+                    methodName = trimmed.removePrefix(".method ").take(220)
+                } else if (trimmed == ".end method") {
+                    methodName = "(fuera de método)"
+                }
+                val matches = urlOrPath.findAll(line).map { it.value.trimEnd('.', ',', ';', ')', ']', '}') }.toList()
+                for (match in matches) {
+                    results.add("Clase: $className\nMétodo: $methodName\nLiteral: $match\nInstrucción: $trimmed")
+                    if (results.size >= 1000) return results.toList()
+                }
+            }
+        }
+        return results.toList()
     }
 
     /**
