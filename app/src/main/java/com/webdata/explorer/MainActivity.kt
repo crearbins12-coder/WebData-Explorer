@@ -204,7 +204,10 @@ class MainActivity : Activity() {
                     super.onPageFinished(view, url)
                     if (!url.isNullOrBlank() && (url.startsWith("https://") || url.startsWith("http://"))) {
                         urlInput.setText(url)
-                        if (activeTabIndex in browserTabs.indices && !switchingTab) browserTabs[activeTabIndex] = url
+                        if (activeTabIndex in browserTabs.indices && !switchingTab) {
+                            browserTabs[activeTabIndex] = url
+                            saveBrowserTabs()
+                        }
                         saveHistory(url)
                     }
                     switchingTab = false
@@ -379,7 +382,34 @@ class MainActivity : Activity() {
         setContentView(root)
         browser.tag = browserPanel
         restoreRequestLog()
+        restoreBrowserTabs()
+        if (activeTabIndex in browserTabs.indices) {
+            urlInput.setText(browserTabs[activeTabIndex])
+            urlInput.hint = "URL de la pestaña " + (activeTabIndex + 1)
+        }
         refreshRequestText()
+    }
+
+    private fun browserTabStore() = getSharedPreferences("webdata_tabs", Context.MODE_PRIVATE)
+
+    private fun saveBrowserTabs() {
+        val array = org.json.JSONArray()
+        browserTabs.forEach { array.put(it) }
+        browserTabStore().edit()
+            .putString("tabs", array.toString())
+            .putInt("active", activeTabIndex)
+            .apply()
+    }
+
+    private fun restoreBrowserTabs() {
+        runCatching {
+            val raw = browserTabStore().getString("tabs", "[]") ?: "[]"
+            val array = org.json.JSONArray(raw)
+            browserTabs.clear()
+            for (i in 0 until minOf(array.length(), 10)) browserTabs.add(array.optString(i))
+            activeTabIndex = browserTabStore().getInt("active", -1)
+            if (activeTabIndex !in browserTabs.indices) activeTabIndex = if (browserTabs.isEmpty()) -1 else 0
+        }
     }
 
     private fun showBrowser() {
@@ -397,6 +427,7 @@ class MainActivity : Activity() {
         urlInput.setText(raw)
         if (activeTabIndex !in browserTabs.indices) { browserTabs.add(raw); activeTabIndex = browserTabs.lastIndex }
         else browserTabs[activeTabIndex] = raw
+        saveBrowserTabs()
         refreshRequestText()
         browser.loadUrl(raw)
     }
@@ -405,7 +436,7 @@ class MainActivity : Activity() {
         if (browserTabs.size >= 10) { toast("Máximo 10 pestañas"); return }
         browserTabs.add("")
         activeTabIndex = browserTabs.lastIndex
-        requestLog.clear()
+        saveBrowserTabs()
         refreshRequestText()
         urlInput.setText("")
         urlInput.hint = "URL de la pestaña " + (activeTabIndex + 1)
@@ -432,6 +463,7 @@ class MainActivity : Activity() {
         if (index !in browserTabs.indices) return
         activeTabIndex = index
         val url = browserTabs[index]
+        saveBrowserTabs()
         refreshRequestText()
         urlInput.setText(url)
         switchingTab = true
