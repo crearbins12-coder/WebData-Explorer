@@ -2082,6 +2082,11 @@ class MainActivity : Activity() {
             textSize = 10f
             setOnClickListener { showSmaliSearchDialog(report) }
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        quickActions.addView(Button(this).apply {
+            text = "EXPLORAR CLASES"
+            textSize = 10f
+            setOnClickListener { showSmaliClassExplorer(report) }
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         panel.addView(quickActions)
         val output = TextView(this).apply {
             text = report
@@ -2214,6 +2219,123 @@ class MainActivity : Activity() {
                 toast("Resultados Smali copiados")
             }
             .setNegativeButton("CERRAR", null)
+            .show()
+    }
+
+    private data class SmaliMethodEntry(val signature: String, val body: String)
+    private data class SmaliClassEntry(val descriptor: String, val methods: List<SmaliMethodEntry>)
+
+    /** Explores only the Smali retained in the report; the APK scan is intentionally bounded. */
+    private fun showSmaliClassExplorer(report: String) {
+        val listingStart = report.indexOf("Muestra de instrucciones tipo Smali")
+        val listingEnd = report.indexOf("=== ARCHIVOS INTERNOS ===", listingStart.coerceAtLeast(0))
+        if (listingStart < 0 || listingEnd <= listingStart) {
+            toast("El informe no contiene una muestra Smali navegable")
+            return
+        }
+        val classes = parseSmaliClasses(report.substring(listingStart, listingEnd))
+        if (classes.isEmpty()) {
+            toast("No se encontraron clases en la muestra Smali")
+            return
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Clases Smali (${classes.size} en la muestra)")
+            .setMessage("Vista estática y limitada: puede no incluir todas las clases del APK.")
+            .setItems(classes.map { entry ->
+                "${entry.descriptor.substringAfterLast('/').removeSuffix(";")} · ${entry.methods.size} métodos"
+            }.toTypedArray()) { _, which ->
+                val selected = classes.getOrNull(which) ?: return@setItems
+                showSmaliMethods(selected)
+            }
+            .setNegativeButton("CERRAR", null)
+            .show()
+    }
+
+    private fun parseSmaliClasses(listing: String): List<SmaliClassEntry> {
+        val result = mutableListOf<SmaliClassEntry>()
+        var currentClass: String? = null
+        var methods = mutableListOf<SmaliMethodEntry>()
+        var currentMethod: String? = null
+        var methodBody = StringBuilder()
+
+        fun finishMethod() {
+            val signature = currentMethod ?: return
+            methods.add(SmaliMethodEntry(signature, methodBody.toString().trimEnd()))
+            currentMethod = null
+            methodBody = StringBuilder()
+        }
+        fun finishClass() {
+            finishMethod()
+            val descriptor = currentClass ?: return
+            result.add(SmaliClassEntry(descriptor, methods.toList()))
+            currentClass = null
+            methods = mutableListOf()
+        }
+
+        for (line in listing.lines()) {
+            val trimmed = line.trim()
+            if (trimmed.startsWith(".class ")) {
+                finishClass()
+                currentClass = trimmed.substringAfterLast(' ').trim()
+            } else if (currentClass != null && trimmed.startsWith(".method ")) {
+                finishMethod()
+                currentMethod = trimmed
+                methodBody = StringBuilder().apply { appendLine(line) }
+            } else if (currentMethod != null) {
+                methodBody.appendLine(line)
+                if (trimmed == ".end method") finishMethod()
+            }
+        }
+        finishClass()
+        return result
+    }
+
+    private fun showSmaliMethods(entry: SmaliClassEntry) {
+        if (entry.methods.isEmpty()) {
+            android.app.AlertDialog.Builder(this)
+                .setTitle(entry.descriptor)
+                .setMessage("La clase aparece en la muestra, pero no hay métodos disponibles en el fragmento conservado.")
+                .setPositiveButton("VOLVER", null)
+                .show()
+            return
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Métodos · ${entry.descriptor.substringAfterLast('/')}")
+            .setItems(entry.methods.map { it.signature.removePrefix(".method ") }.toTypedArray()) { _, which ->
+                val method = entry.methods.getOrNull(which) ?: return@setItems
+                showSmaliMethod(entry.descriptor, method)
+            }
+            .setNegativeButton("VOLVER", null)
+            .show()
+    }
+
+    private fun showSmaliMethod(className: String, method: SmaliMethodEntry) {
+        val code = buildString {
+            appendLine(className)
+            appendLine(method.signature)
+            append(method.body)
+        }
+        val output = TextView(this).apply {
+            text = code
+            textSize = 12f
+            typeface = android.graphics.Typeface.MONOSPACE
+            setTextIsSelectable(true)
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            setBackgroundColor(Color.rgb(25, 32, 47))
+        }
+        val scroll = ScrollView(this).apply {
+            addView(output)
+            isFillViewport = true
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Smali · método")
+            .setView(scroll)
+            .setNeutralButton("COPIAR MÉTODO") { _, _ ->
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("Smali $className", code))
+                toast("Método Smali copiado")
+            }
+            .setNegativeButton("VOLVER", null)
             .show()
     }
 
