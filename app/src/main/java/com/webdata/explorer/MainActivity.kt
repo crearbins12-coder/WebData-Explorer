@@ -2077,6 +2077,19 @@ class MainActivity : Activity() {
             textSize = 10f
             setOnClickListener { showSmaliClassExplorer(report) }
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        quickActions.addView(Button(this).apply {
+            text = "EXPORTAR JSON"
+            textSize = 10f
+            setOnClickListener {
+                pendingExport = buildApkReportJson(report)
+                val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "application/json"
+                    putExtra(Intent.EXTRA_TITLE, "webdata-analisis-apk.json")
+                }
+                startActivityForResult(intent, exportRequestCode)
+            }
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         panel.addView(quickActions)
         val output = TextView(this).apply {
             text = report
@@ -2111,6 +2124,58 @@ class MainActivity : Activity() {
             }
             .setPositiveButton("CERRAR", null)
             .show()
+    }
+
+    /** Converts the report's named sections into a portable JSON document without claiming findings are verified. */
+    private fun buildApkReportJson(report: String): String {
+        val sectionNames = listOf(
+            "=== INFORMACIÓN DEL PAQUETE ===",
+            "=== CLASES, MÉTODOS E INSTRUCCIONES DEX ===",
+            "=== ARCHIVOS INTERNOS ===",
+            "=== POSIBLES PUNTOS DE LLAMADA DE RED ===",
+            "=== URLS ENCONTRADAS EN DEX ===",
+            "=== POSIBLES RUTAS API ===",
+            "=== BIBLIOTECAS / CLIENTES HTTP DETECTADOS ===",
+            "=== CADENAS RELEVANTES ===",
+            "=== LÍMITES DEL ANÁLISIS ==="
+        )
+        val sections = org.json.JSONObject()
+        for (i in sectionNames.indices) {
+            val marker = sectionNames[i]
+            val start = report.indexOf(marker)
+            if (start < 0) continue
+            val contentStart = start + marker.length
+            val nextStart = sectionNames.drop(i + 1)
+                .map { report.indexOf(it, contentStart) }
+                .filter { it >= 0 }
+                .minOrNull() ?: report.length
+            sections.put(marker.removePrefix("=== ").removeSuffix(" ==="), report.substring(contentStart, nextStart).trim())
+        }
+        val urls = org.json.JSONArray()
+        val paths = org.json.JSONArray()
+        val networkCalls = org.json.JSONArray()
+        fun fillArray(section: String, target: org.json.JSONArray) {
+            val value = sections.optString(section, "")
+            value.lineSequence().map { it.trim() }
+                .filter { it.isNotBlank() && !it.startsWith("Coincidencias") && !it.startsWith("Referencias detectadas") && !it.startsWith("…") }
+                .forEach { target.put(it.removePrefix("• ").trim()) }
+        }
+        fillArray("URLS ENCONTRADAS EN DEX", urls)
+        fillArray("POSIBLES RUTAS API", paths)
+        fillArray("POSIBLES PUNTOS DE LLAMADA DE RED", networkCalls)
+        return org.json.JSONObject()
+            .put("format", "webdata-explorer-apk-report")
+            .put("version", 1)
+            .put("generatedAt", java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", java.util.Locale.US).format(java.util.Date()))
+            .put("analysisMode", "static-read-only")
+            .put("findingsAreVerified", false)
+            .put("reportHeader", report.lineSequence().takeWhile { !it.startsWith("=== ") }.joinToString("\\n").trim())
+            .put("sections", sections)
+            .put("urls", urls)
+            .put("possibleApiPaths", paths)
+            .put("possibleNetworkCallSites", networkCalls)
+            .put("limitations", "El informe contiene indicios estáticos. Las URLs y rutas no están confirmadas como endpoints funcionales; la muestra Smali está limitada.")
+            .toString(2)
     }
 
     /**
