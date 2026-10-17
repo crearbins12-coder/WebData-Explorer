@@ -119,7 +119,7 @@ object ApkAnalyzer {
                             totalDexBytes += readTotal
                             out.toByteArray()
                         }
-                        val dexResult = DexCodeInspector.inspect(bytes)
+                        val dexResult = DexCodeInspector.inspect(bytes, context.cacheDir)
                         dexResults.add(dexResult)
                         allUrls.addAll(dexResult.endpoints.filter { it.startsWith("http://") || it.startsWith("https://") })
                         endpointPaths.addAll(dexResult.endpoints.filterNot { it.startsWith("http://") || it.startsWith("https://") })
