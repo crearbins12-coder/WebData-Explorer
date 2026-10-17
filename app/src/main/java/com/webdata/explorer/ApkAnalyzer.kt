@@ -137,16 +137,22 @@ object ApkAnalyzer {
                         networkCallSites.addAll(dexResult.networkCalls)
                         interesting.addAll(dexResult.strings.filter { it.length in 4..350 })
                         val strings = printableStrings(bytes)
-                        strings.forEach { value ->
-                            URL_REGEX.findAll(value).forEach { match ->
-                                allUrls.add(match.value.trimEnd('.', ',', ';', ')', ']', '}'))
-                            }
-                            PATH_REGEX.findAll(value).forEach { match -> endpointPaths.add(match.value) }
-                            if (INTERESTING_REGEX.containsMatchIn(value) && value.length in 4..350) {
-                                interesting.add(value)
-                            }
-                            LIBRARY_REGEX.findAll(value).forEach { match ->
-                                libraries.add(match.value)
+                        strings.forEach { rawValue ->
+                            // Scan the original text and a small set of safely decoded variants.
+                            // This helps reveal endpoints obfuscated as hex/Base64/URL encoding.
+                            val candidates = linkedSetOf(rawValue)
+                            candidates.addAll(decodeStringCandidates(rawValue))
+                            for (value in candidates) {
+                                URL_REGEX.findAll(value).forEach { match ->
+                                    allUrls.add(match.value.trimEnd('.', ',', ';', ')', ']', '}'))
+                                }
+                                PATH_REGEX.findAll(value).forEach { match -> endpointPaths.add(match.value) }
+                                if (INTERESTING_REGEX.containsMatchIn(value) && value.length in 4..350) {
+                                    interesting.add(value)
+                                }
+                                LIBRARY_REGEX.findAll(value).forEach { match ->
+                                    libraries.add(match.value)
+                                }
                             }
                         }
                     }
@@ -214,6 +220,41 @@ object ApkAnalyzer {
         report.appendLine("Las URLs/rutas son pistas, no endpoints confirmados. Puede perder cadenas codificadas, comprimidas o construidas en tiempo de ejecución.")
         report.appendLine("No se ejecuta ni instala el APK. La descompilación Java completa y el renderizado Smali fiel requieren una etapa adicional de integración y validación.")
         return report.toString()
+    }
+
+    /**
+     * Returns bounded candidate decodings only; it does not execute code or contact endpoints.
+     * Hex is accepted only when the full string is even-length hex; Base64 is length-limited.
+     */
+    private fun decodeStringCandidates(value: String): Set<String> {
+        val result = linkedSetOf<String>()
+        val trimmed = value.trim()
+        if (trimmed.length in 8..4096 && trimmed.length % 2 == 0 &&
+            trimmed.all { it in '0'..'9' || it.lowercaseChar() in 'a'..'f' }) {
+            runCatching {
+                val bytes = ByteArray(trimmed.length / 2) { index ->
+                    trimmed.substring(index * 2, index * 2 + 2).toInt(16).toByte()
+                }
+                val decoded = bytes.toString(Charsets.UTF_8)
+                if (decoded.count { it == '\uFFFD' } < 2 && decoded.any { it.isLetter() }) result.add(decoded)
+            }
+        }
+        if (trimmed.length in 12..4096 && trimmed.matches(Regex("[A-Za-z0-9_+/=-]+"))) {
+            runCatching {
+                val decodedBytes = android.util.Base64.decode(trimmed, android.util.Base64.DEFAULT)
+                if (decodedBytes.size in 4..4096) {
+                    val decoded = decodedBytes.toString(Charsets.UTF_8)
+                    if (decoded.count { it == '\uFFFD' } < 2 && decoded.any { it.isLetter() }) result.add(decoded)
+                }
+            }
+        }
+        if (trimmed.contains('%') && trimmed.length <= 4096) {
+            runCatching {
+                val decoded = java.net.URLDecoder.decode(trimmed, "UTF-8")
+                if (decoded != trimmed && decoded.length <= 4096) result.add(decoded)
+            }
+        }
+        return result
     }
 
     private fun printableStrings(bytes: ByteArray): List<String> {
