@@ -1471,39 +1471,90 @@ class MainActivity : Activity() {
     private fun showApiEndpoints() {
         val snapshot = synchronized(requestLog) { requestLog.toList() }
         val endpoints = mutableMapOf<String, MutableList<Pair<String, org.json.JSONObject?>>>()
+        var ignoredNoise = 0
+
         snapshot.forEach { line ->
             val detail = requestDetails[line]
             val url = detail?.optString("url").orEmpty().ifBlank {
-                Regex("""https?://[^\s]+""", RegexOption.IGNORE_CASE).find(line)?.value.orEmpty()
+                Regex("""https?://[^\\s]+""", RegexOption.IGNORE_CASE).find(line)?.value.orEmpty()
             }
             if (url.isBlank()) return@forEach
+
             val uri = runCatching { URI(url) }.getOrNull()
-            val path = uri?.path.orEmpty()
-            val isApi = path.contains("/api/", true) || path.contains("graphql", true) ||
-                path.contains("/ajax/", true) || detail?.optString("kind").orEmpty().contains("FETCH", true) ||
-                detail?.optString("kind").orEmpty().contains("XHR", true) ||
-                detail?.optString("contentType").orEmpty().contains("json", true)
-            if (!isApi) return@forEach
-            val method = detail?.optString("method").orEmpty().ifBlank { line.substringAfter("· ").substringBefore(" ·") }
-            val key = "$method ${uri?.host.orEmpty()}$path"
+            val host = uri?.host.orEmpty()
+            val path = uri?.path.orEmpty().ifBlank { "/" }
+            val lowerPath = path.lowercase()
+            val query = uri?.rawQuery.orEmpty().lowercase()
+            val method = detail?.optString("method").orEmpty()
+                .ifBlank { line.substringAfter("· ").substringBefore(" ·") }
+                .uppercase()
+            val kind = detail?.optString("kind").orEmpty().uppercase()
+            val contentType = detail?.optString("contentType").orEmpty().lowercase()
+            val body = detail?.optString("responseBody").orEmpty().trimStart()
+            val requestBody = detail?.optString("requestBody").orEmpty().trimStart()
+
+            // No clasificar archivos estáticos como API aunque hayan sido pedidos con fetch/XHR.
+            val extension = lowerPath.substringAfterLast('.', "")
+            val staticExtensions = setOf(
+                "js", "mjs", "css", "png", "jpg", "jpeg", "gif", "webp", "avif", "svg", "ico",
+                "woff", "woff2", "ttf", "otf", "eot", "mp4", "m4v", "webm", "mp3", "aac",
+                "m3u8", "mpd", "ts", "m4s", "vtt", "pdf"
+            )
+            val isStaticFile = extension in staticExtensions
+            val hasApiPath = Regex("""/(api|ajax|graphql|gql|rest|rpc)(/|$)|/v[0-9]+(/|$)""")
+                .containsMatchIn(lowerPath) || lowerPath.contains("graphql")
+            val hasApiQuery = Regex("""(^|&)(action|endpoint|operation|query|mutation|graphql|format=json|_ajax)(=|&|$)""")
+                .containsMatchIn(query)
+            val jsonContent = contentType.contains("json") || contentType.contains("graphql")
+            val jsonResponse = body.startsWith("{") || body.startsWith("[")
+            val jsonRequest = requestBody.startsWith("{") || requestBody.startsWith("[")
+            val fetchOrXhr = kind.contains("FETCH") || kind.contains("XHR")
+            val score = (if (hasApiPath) 4 else 0) +
+                (if (hasApiQuery) 2 else 0) +
+                (if (jsonContent) 3 else 0) +
+                (if (jsonResponse || jsonRequest) 2 else 0) +
+                (if (fetchOrXhr) 1 else 0)
+
+            if (isStaticFile || score < 3) {
+                ignoredNoise++
+                return@forEach
+            }
+
+            // Agrupar por método, host y ruta; normalizar IDs largos y tokens en la ruta.
+            val normalizedPath = path.replace(Regex("""/[0-9]{3,}(?=/|$)"""), "/{id}")
+                .replace(Regex("""/[0-9a-fA-F]{16,}(?=/|$)"""), "/{token}")
+                .trimEnd('/').ifBlank { "/" }
+            val key = "$" + "{method} $" + "{host}$" + "{normalizedPath}"
             endpoints.getOrPut(key) { mutableListOf() }.add(line to detail)
         }
+
         if (endpoints.isEmpty()) {
-            toast("Todavía no se detectaron endpoints API en esta sesión")
+            toast("No se detectaron endpoints con señales suficientes. Probá navegar/interactuar con la página y revisar la captura de solicitudes.")
             return
         }
-        val rows = endpoints.entries.sortedBy { it.key }.map { (key, items) ->
+
+        val rows = endpoints.entries.sortedByDescending { it.value.size }.map { (key, items) ->
             val latest = items.last()
             val d = latest.second
             val code = d?.optInt("status", 0)?.takeIf { it > 0 }?.toString() ?: "HTTP ?"
             val body = d?.optString("responseBody").orEmpty()
-            val keys = if (body.isNotBlank() && (d?.optString("bodyType") == "JSON" || body.trimStart().startsWith("{") || body.trimStart().startsWith("["))) {
+            val jsonLike = body.trimStart().let { it.startsWith("{") || it.startsWith("[") }
+            val keys = if (jsonLike) {
                 extractJsonKeys(body).take(12).joinToString(", ").ifBlank { "JSON sin claves detectables" }
-            } else "respuesta no disponible/no JSON"
-            "$key · $code · ${items.size} registro(s)\n  $keys" to latest.first
+            } else "sin cuerpo JSON capturado"
+            val responseType = d?.optString("contentType").orEmpty().ifBlank { "tipo desconocido" }
+            val confidence = when {
+                responseType.contains("json", true) || responseType.contains("graphql", true) || jsonLike -> "JSON"
+                key.contains("/api/", true) || key.contains("graphql", true) -> "ruta API"
+                else -> "probable"
+            }
+            "$" + "{key} · HTTP $" + "{code} · $" + "{items.size} registro(s) · $" + "{confidence}\n  $" + "{responseType} · $" + "{keys}"
+                .let { it to latest.first }
         }
+
         android.app.AlertDialog.Builder(this)
-            .setTitle("Endpoints observados (${rows.size})")
+            .setTitle("Endpoints probables ($" + "{rows.size})")
+            .setMessage("Agrupados por método y ruta. Se excluyen recursos estáticos comunes; la clasificación es orientativa y depende de lo que WebView haya podido capturar. Ruido omitido: $" + "$ignoredNoise.")
             .setItems(rows.map { it.first.take(240) }.toTypedArray()) { _, which ->
                 val line = rows.getOrNull(which)?.second ?: return@setItems
                 if (requestDetails.containsKey(line)) showRequestDetails(line)
