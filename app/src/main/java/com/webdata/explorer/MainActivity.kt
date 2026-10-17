@@ -2,6 +2,8 @@ package com.webdata.explorer
 
 import android.app.Activity
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -41,6 +43,48 @@ class MainActivity : Activity() {
     private var requestFilter = "TODAS"
     private var pendingExport = ""
     private val exportRequestCode = 4501
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val requestPollRunnable = object : Runnable {
+        override fun run() {
+            if (!browserMode || !::browser.isInitialized) return
+            browser.evaluateJavascript(
+                """(function(){
+                    try {
+                        var resources = performance.getEntriesByType('resource').map(function(e){return e.name;});
+                        var media = Array.prototype.slice.call(document.querySelectorAll('video, audio, source')).map(function(e){
+                            return e.currentSrc || e.src || e.getAttribute('src') || '';
+                        }).filter(Boolean);
+                        return JSON.stringify({resources:resources, media:media, network:window.__wdxNet || []});
+                    } catch(e) { return JSON.stringify({error:String(e)}); }
+                })()""".trimIndent()
+            ) { value ->
+                runCatching {
+                    val decoded = org.json.JSONTokener(value).nextValue() as? String ?: "{}"
+                    val payload = org.json.JSONObject(decoded)
+                    val resources = payload.optJSONArray("resources") ?: org.json.JSONArray()
+                    for (i in 0 until resources.length()) {
+                        val item = resources.optString(i)
+                        if (item.startsWith("http://") || item.startsWith("https://")) addRequest("RECURSO DOM [${classifyRequest(item)}] $item")
+                    }
+                    val media = payload.optJSONArray("media") ?: org.json.JSONArray()
+                    for (i in 0 until media.length()) {
+                        val item = media.optString(i)
+                        if (item.startsWith("http://") || item.startsWith("https://")) addRequest("MEDIO DOM [${classifyRequest(item)}] $item")
+                    }
+                    val network = payload.optJSONArray("network") ?: org.json.JSONArray()
+                    for (i in 0 until network.length()) {
+                        val item = network.optJSONObject(i) ?: continue
+                        val kind = item.optString("kind", "FETCH")
+                        val url = item.optString("url", "")
+                        val code = item.optInt("status", 0)
+                        if (url.startsWith("http://") || url.startsWith("https://")) addRequest("$kind HTTP $code [${classifyRequest(url)}] $url")
+                    }
+                }
+                if (browserMode) mainHandler.postDelayed(requestPollRunnable, 1800)
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -234,7 +278,9 @@ class MainActivity : Activity() {
                         }
                         runOnUiThread {
                             refreshRequestText()
-                            statusText.text = "Navegador listo · ${requestLog.size} solicitudes observadas. Recargá para registrar fetch/XHR desde el inicio."
+                            statusText.text = "Navegador listo · observando solicitudes continuamente. Interactuá con la página para capturar más datos."
+                            mainHandler.removeCallbacks(requestPollRunnable)
+                            mainHandler.postDelayed(requestPollRunnable, 1800)
                         }
                     }
                 }
@@ -308,6 +354,7 @@ class MainActivity : Activity() {
 
     private fun showAnalyzer() {
         browserMode = false
+        mainHandler.removeCallbacks(requestPollRunnable)
         (browser.tag as? View)?.visibility = View.GONE
         resultScroll.visibility = View.VISIBLE
         statusText.text = "Modo analizador HTML"
@@ -633,6 +680,7 @@ class MainActivity : Activity() {
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
 
     override fun onDestroy() {
+        mainHandler.removeCallbacks(requestPollRunnable)
         executor.shutdownNow()
         browser.destroy()
         super.onDestroy()
