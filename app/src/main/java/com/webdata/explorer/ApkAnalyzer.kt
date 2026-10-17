@@ -91,6 +91,7 @@ object ApkAnalyzer {
         val nativeEntries = linkedSetOf<String>()
         val libraries = linkedSetOf<String>()
         val dexResults = mutableListOf<DexCodeInspector.Result>()
+        val networkCallSites = linkedSetOf<String>()
         var totalDexBytes = 0L
 
         ZipFile(apk).use { zip ->
@@ -124,6 +125,7 @@ object ApkAnalyzer {
                         allUrls.addAll(dexResult.endpoints.filter { it.startsWith("http://") || it.startsWith("https://") })
                         endpointPaths.addAll(dexResult.endpoints.filterNot { it.startsWith("http://") || it.startsWith("https://") })
                         libraries.addAll(dexResult.libraries)
+                        networkCallSites.addAll(dexResult.networkCalls)
                         interesting.addAll(dexResult.strings.filter { it.length in 4..350 })
                         val strings = printableStrings(bytes)
                         strings.forEach { value ->
@@ -161,6 +163,13 @@ object ApkAnalyzer {
         nativeEntries.take(100).forEach { report.appendLine("  • $it") }
         report.appendLine("Listado de archivos (máximo 600):")
         fileEntries.forEach { report.appendLine("  • $it") }
+
+        report.appendLine()
+        report.appendLine("=== POSIBLES PUNTOS DE LLAMADA DE RED ===")
+        report.appendLine("Referencias detectadas: ${networkCallSites.size}")
+        networkCallSites.take(MAX_REPORT_ITEMS).forEach { report.appendLine(it) }
+        if (networkCallSites.size > MAX_REPORT_ITEMS) report.appendLine("… resultados limitados")
+        if (networkCallSites.isEmpty()) report.appendLine("No se detectaron referencias de red reconocibles en las instrucciones examinadas.")
 
         report.appendLine()
         report.appendLine("=== URLS ENCONTRADAS EN DEX ===")
