@@ -9,6 +9,11 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.TextPaint
+import android.text.method.LinkMovementMethod
+import android.text.style.ClickableSpan
 import android.view.ViewGroup
 import android.view.View
 import android.webkit.WebResourceRequest
@@ -40,6 +45,7 @@ class MainActivity : Activity() {
     private lateinit var contentFrame: FrameLayout
     private val requestLog = java.util.Collections.synchronizedList(mutableListOf<String>())
     private val requestKeys = HashSet<String>()
+    private val requestDetails = java.util.Collections.synchronizedMap(mutableMapOf<String, org.json.JSONObject>())
     private var lastReport = ""
     private var browserMode = false
     private var requestFilter = "TODAS"
@@ -446,7 +452,8 @@ class MainActivity : Activity() {
             text = "Las solicitudes observadas aparecerán acá."
             textSize = 11f
             setTextColor(Color.rgb(230, 233, 240))
-            setTextIsSelectable(true)
+            setTextIsSelectable(false)
+            movementMethod = LinkMovementMethod.getInstance()
             setPadding(dp(8), dp(8), dp(8), dp(8))
         }
         val browserPanel = LinearLayout(this).apply {
@@ -721,7 +728,8 @@ class MainActivity : Activity() {
         }
         // También borrar el registro persistido para que al reabrir la app
         // no reaparezcan solicitudes pertenecientes a páginas anteriores.
-        requestStore().edit().putString("requests", "[]").apply()
+        requestDetails.clear()
+        requestStore().edit().putString("requests", "[]").putString("details", "[]").apply()
         if (::requestText.isInitialized) {
             mainHandler.post { refreshRequestText() }
         }
@@ -733,7 +741,11 @@ class MainActivity : Activity() {
         val snapshot = synchronized(requestLog) { requestLog.toList() }
         val array = org.json.JSONArray()
         snapshot.forEach { array.put(it) }
-        requestStore().edit().putString("requests", array.toString()).apply()
+        val detailsArray = org.json.JSONArray()
+        synchronized(requestDetails) {
+            snapshot.forEach { line -> requestDetails[line]?.let { detailsArray.put(org.json.JSONObject().put("line", line).put("detail", it)) } }
+        }
+        requestStore().edit().putString("requests", array.toString()).putString("details", detailsArray.toString()).apply()
     }
 
     private fun restoreRequestLog() {
@@ -748,6 +760,14 @@ class MainActivity : Activity() {
                     if (requestKeys.add(item)) requestLog.add(item)
                 }
                 while (requestLog.size > 500) requestKeys.remove(requestLog.removeAt(0))
+            }
+            requestDetails.clear()
+            val detailArray = org.json.JSONArray(requestStore().getString("details", "[]") ?: "[]")
+            for (i in 0 until detailArray.length()) {
+                val item = detailArray.optJSONObject(i) ?: continue
+                val line = item.optString("line")
+                val detail = item.optJSONObject("detail")
+                if (line.isNotBlank() && detail != null) requestDetails[line] = detail
             }
         }
     }
