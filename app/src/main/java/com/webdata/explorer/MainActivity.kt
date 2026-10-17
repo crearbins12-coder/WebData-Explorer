@@ -199,6 +199,7 @@ class MainActivity : Activity() {
 
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
+                    if (!url.isNullOrBlank()) urlInput.setText(url)
                     statusText.text = "Navegación terminada · registrando recursos…"
                     // Instala observadores pasivos para las siguientes interacciones del usuario.
                     // No resuelve ni evita desafíos de acceso.
@@ -296,6 +297,38 @@ class MainActivity : Activity() {
         val browserPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
+            val browserControls = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                fun control(label: String, action: () -> Unit) {
+                    addView(Button(this@MainActivity).apply {
+                        text = label
+                        textSize = 10f
+                        minWidth = dp(48)
+                        setPadding(dp(2), 0, dp(2), 0)
+                        setOnClickListener { action() }
+                    }, LinearLayout.LayoutParams(0, dp(42), 1f))
+                }
+                control("◀") {
+                    if (browser.canGoBack()) browser.goBack() else toast("No hay página anterior")
+                }
+                control("▶") {
+                    if (browser.canGoForward()) browser.goForward() else toast("No hay página siguiente")
+                }
+                control("↻") {
+                    if (browser.url != null) browser.reload() else toast("Abrí una página primero")
+                }
+                control("■") { browser.stopLoading(); statusText.text = "Carga detenida" }
+                control("COMPARTIR") {
+                    val current = browser.url ?: urlInput.text.toString()
+                    if (current.isNotBlank()) {
+                        startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, current)
+                        }, "Compartir página"))
+                    } else toast("No hay URL para compartir")
+                }
+            }
+            addView(browserControls)
             addView(browser, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
             addView(TextView(this@MainActivity).apply {
                 text = "SOLICITUDES DE RED · FILTROS"
