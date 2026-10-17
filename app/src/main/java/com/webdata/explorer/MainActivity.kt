@@ -1476,7 +1476,7 @@ class MainActivity : Activity() {
         snapshot.forEach { line ->
             val detail = requestDetails[line]
             val url = detail?.optString("url").orEmpty().ifBlank {
-                Regex("""https?://[^\\s]+""", RegexOption.IGNORE_CASE).find(line)?.value.orEmpty()
+                Regex("""https?://[^\s]+""", RegexOption.IGNORE_CASE).find(line)?.value.orEmpty()
             }
             if (url.isBlank()) return@forEach
 
@@ -1524,7 +1524,7 @@ class MainActivity : Activity() {
             val normalizedPath = path.replace(Regex("""/[0-9]{3,}(?=/|$)"""), "/{id}")
                 .replace(Regex("""/[0-9a-fA-F]{16,}(?=/|$)"""), "/{token}")
                 .trimEnd('/').ifBlank { "/" }
-            val key = "$" + "{method} $" + "{host}$" + "{normalizedPath}"
+            val key = "$method $host$normalizedPath"
             endpoints.getOrPut(key) { mutableListOf() }.add(line to detail)
         }
 
@@ -1553,8 +1553,8 @@ class MainActivity : Activity() {
         }
 
         android.app.AlertDialog.Builder(this)
-            .setTitle("Endpoints probables ($" + "{rows.size})")
-            .setMessage("Agrupados por método y ruta. Se excluyen recursos estáticos comunes; la clasificación es orientativa y depende de lo que WebView haya podido capturar. Ruido omitido: $" + "$ignoredNoise.")
+            .setTitle("Endpoints probables (${rows.size})")
+            .setMessage("Agrupados por método y ruta. Se excluyen recursos estáticos comunes; la clasificación es orientativa y depende de lo que WebView haya podido capturar. Ruido omitido: $ignoredNoise.")
             .setItems(rows.map { it.first.take(240) }.toTypedArray()) { _, which ->
                 val line = rows.getOrNull(which)?.second ?: return@setItems
                 if (requestDetails.containsKey(line)) showRequestDetails(line)
