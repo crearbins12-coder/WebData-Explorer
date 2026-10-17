@@ -548,7 +548,7 @@ class MainActivity : Activity() {
             }
         }
 
-        val absoluteRegex = Regex("""https?://[^,\\s"'<>\\\\]+""", RegexOption.IGNORE_CASE)
+        val absoluteRegex = Regex("""https?://[^,\s"'<>\\]+""", RegexOption.IGNORE_CASE)
         for (match in absoluteRegex.findAll(html)) {
             val value = match.value.trimEnd(')', ']', ',', ';', '.')
             links.add(value)
