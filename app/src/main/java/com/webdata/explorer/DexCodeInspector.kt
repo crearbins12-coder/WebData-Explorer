@@ -21,6 +21,7 @@ object DexCodeInspector {
         val strings: Set<String>,
         val endpoints: Set<String>,
         val libraries: Set<String>,
+        val networkCalls: Set<String>,
         val listing: String,
         val warning: String? = null
     )
@@ -29,6 +30,7 @@ object DexCodeInspector {
         val strings = linkedSetOf<String>()
         val endpoints = linkedSetOf<String>()
         val libraries = linkedSetOf<String>()
+        val networkCalls = linkedSetOf<String>()
         val listing = StringBuilder()
         var classCount = 0
         var methodCount = 0
@@ -80,6 +82,11 @@ object DexCodeInspector {
                                     is MethodReference -> {
                                         if (opcode.startsWith("invoke-")) invokeCount++
                                         val owner = ref.definingClass
+                                        val networkOwner = NETWORK_OWNER_REGEX.containsMatchIn(owner)
+                                        val networkMethod = ref.name in NETWORK_METHODS
+                                        if (networkOwner || networkMethod) {
+                                            networkCalls.add("${clazz.type}->${method.name} : $opcode ${owner}->${ref.name}")
+                                        }
                                         if (owner.contains("retrofit") || owner.contains("okhttp") ||
                                             owner.contains("volley") || owner.contains("ktor") ||
                                             owner.contains("graphql", true)) libraries.add(owner)
@@ -114,10 +121,10 @@ object DexCodeInspector {
             }
             val actualSmali = if (cacheDir != null) disassemble(bytes, cacheDir) else ""
             val finalListing = actualSmali.ifBlank { listing.toString() }
-            return Result(classCount, methodCount, invokeCount, strings, endpoints, libraries, finalListing)
+            return Result(classCount, methodCount, invokeCount, strings, endpoints, libraries, networkCalls, finalListing)
         } catch (e: Exception) {
             return Result(
-                classCount, methodCount, invokeCount, strings, endpoints, libraries, listing.toString(),
+                classCount, methodCount, invokeCount, strings, endpoints, libraries, networkCalls, listing.toString(),
                 "No se pudo interpretar este DEX: ${e.javaClass.simpleName}: ${e.message ?: "sin detalles"}"
             )
         }
@@ -153,6 +160,17 @@ object DexCodeInspector {
             marker.deleteRecursively()
         }
     }
+
+    private val NETWORK_OWNER_REGEX = Regex(
+        """(?:okhttp|retrofit|volley|ktor|HttpURLConnection|java\\.net\\.URL|URLConnection|WebView|Cronet|graphql)""",
+        RegexOption.IGNORE_CASE
+    )
+    private val NETWORK_METHODS = setOf(
+        "baseUrl", "url", "newCall", "enqueue", "execute", "openConnection",
+        "connect", "getInputStream", "getOutputStream", "setRequestMethod",
+        "setRequestProperty", "addHeader", "header", "build", "fetch", "loadUrl",
+        "post", "get", "put", "delete", "create", "newBuilder"
+    )
 
     private val URL_REGEX = Regex("""https?://[^\s\"'<>\\]+""", RegexOption.IGNORE_CASE)
     private val PATH_REGEX = Regex("""/(?:api|v[0-9]+|graphql|rest|auth|oauth|portalCore|wp-json)/[^\s\"'<>\\]{1,180}""", RegexOption.IGNORE_CASE)
