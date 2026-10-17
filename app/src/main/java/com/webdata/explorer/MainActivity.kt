@@ -74,6 +74,7 @@ class MainActivity : Activity() {
   if (window.__wdxInstalled) return JSON.stringify({resources:performance.getEntriesByType('resource').map(function(e){return e.name;}),media:[],network:[]});
   window.__wdxInstalled=true; window.__wdxNet=[]; window.__wdxNetCursor=0;
   var LIMIT=12000;
+  try { if(window.WebDataCapture && window.WebDataCapture.getBodyLimit) LIMIT=Number(window.WebDataCapture.getBodyLimit())||LIMIT; } catch(e) {}
   function redact(s) {
    s=String(s||'').slice(0,LIMIT);
    s=s.replace(/(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|secret|session|jwt|credential|signature)(\s*[:=]\s*)([^\r\n,;&]+)/ig,'$1$2[REDACTADO]');
@@ -623,6 +624,7 @@ class MainActivity : Activity() {
                 control("API") { showApiEndpoints() }
                 control("MULTIMEDIA") { showMediaRequests() }
                 control("SESIONES") { showSavedSessions() }
+                control("AJUSTES") { showSettings() }
             }
             addView(browserControls)
             addView(browser, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -1071,6 +1073,9 @@ class MainActivity : Activity() {
 
     private inner class WebDataCaptureBridge {
         @JavascriptInterface
+        fun getBodyLimit(): Int = getSharedPreferences("webdata_settings", Context.MODE_PRIVATE).getInt("body_limit", 12000).coerceIn(4096, 24576)
+
+        @JavascriptInterface
         fun postCapture(payload: String?) {
             if (!scanEnabled || payload.isNullOrBlank()) return
             if (payload.length > 48_000) {
@@ -1128,9 +1133,9 @@ class MainActivity : Activity() {
             .put("responseSizeCaptured", responseSize)
             .put("initiatorOrigin", sanitizeUrlForStorage(initiatorOrigin))
             .put("requestHeaders", cleanSensitiveText(requestHeaders).take(12000))
-            .put("requestBody", cleanSensitiveText(requestBody).take(16000))
+             .put("requestBody", cleanSensitiveText(requestBody).take(32000))
             .put("responseHeaders", cleanSensitiveText(responseHeaders).take(12000))
-            .put("responseBody", cleanSensitiveText(responseBody).take(16000))
+            .put("responseBody", cleanSensitiveText(responseBody).take(32000))
             .put("captureState", captureState).put("note", note)
         synchronized(requestDetails) {
             requestDetails[line] = detail
@@ -1359,6 +1364,28 @@ class MainActivity : Activity() {
             </script></body></html>
         """.trimIndent()
         browser.loadDataWithBaseURL("https://webdata.test/", html, "text/html", "UTF-8", "https://webdata.test/")
+    }
+
+    private fun showSettings() {
+        val prefs = getSharedPreferences("webdata_settings", Context.MODE_PRIVATE)
+        val choices = arrayOf("4 KB — mínimo", "12 KB — recomendado", "24 KB — respuestas más largas")
+        val values = intArrayOf(4096, 12000, 24576)
+        val current = prefs.getInt("body_limit", 12000)
+        val selected = values.indices.minByOrNull { kotlin.math.abs(values[it] - current) } ?: 1
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Ajustes de captura")
+            .setSingleChoiceItems(choices, selected) { dialog, which ->
+                prefs.edit().putInt("body_limit", values[which]).apply()
+                dialog.dismiss()
+                toast("Límite aplicado a la próxima navegación")
+            }
+            .setNeutralButton("BORRAR SESIONES") { _, _ ->
+                val files = sessionDirectory().listFiles { f -> f.isFile && f.extension == "json" }.orEmpty()
+                files.forEach { it.delete() }
+                toast("Sesiones guardadas eliminadas")
+            }
+            .setNegativeButton("CERRAR", null)
+            .show()
     }
 
     private fun showDiagnostics() {
