@@ -607,6 +607,7 @@ class MainActivity : Activity() {
                 control("PAUSAR SCAN") { toggleScan() }
                 control("DIAGNÓSTICO") { showDiagnostics() }
                 control("PRUEBA CAPTURA") { runCaptureTest() }
+                control("EXPORTAR CSV") { exportRequestsCsv() }
             }
             addView(browserControls)
             addView(browser, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -1218,6 +1219,44 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun exportRequestsCsv() {
+        val snapshot = synchronized(requestLog) { requestLog.toList() }
+        if (snapshot.isEmpty()) {
+            toast("Primero abrí una página para registrar solicitudes")
+            return
+        }
+        fun csv(value: String): String = "\"" + value.replace("\"", "\"\"").replace("\r", " ").replace("\n", "\\n") + "\""
+        val columns = listOf("fecha", "metodo", "estado_http", "url", "tipo", "content_type", "estado_captura", "duracion_ms", "origen", "encabezados_solicitud", "cuerpo_enviado", "encabezados_respuesta", "cuerpo_recibido", "nota")
+        val rows = mutableListOf(columns.joinToString(","))
+        snapshot.forEach { line ->
+            val d = requestDetails[line]
+            val values = listOf(
+                d?.optString("timestamp").orEmpty(),
+                d?.optString("method").orEmpty(),
+                d?.optInt("status", 0)?.takeIf { it > 0 }?.toString().orEmpty(),
+                d?.optString("url").orEmpty().ifBlank { Regex("""https?://[^\s]+""").find(line)?.value.orEmpty() },
+                d?.optString("kind").orEmpty(),
+                d?.optString("contentType").orEmpty(),
+                d?.optString("captureState").orEmpty(),
+                d?.optLong("durationMs", -1L)?.takeIf { it >= 0 }?.toString().orEmpty(),
+                d?.optString("initiatorOrigin").orEmpty(),
+                d?.optString("requestHeaders").orEmpty(),
+                d?.optString("requestBody").orEmpty(),
+                d?.optString("responseHeaders").orEmpty(),
+                d?.optString("responseBody").orEmpty(),
+                d?.optString("note").orEmpty().ifBlank { "No se capturaron todos los campos; consultar estado y limitaciones de WebView." }
+            )
+            rows.add(values.joinToString(",") { csv(it) })
+        }
+        pendingExport = rows.joinToString("\n")
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "text/csv"
+            putExtra(Intent.EXTRA_TITLE, "webdata-solicitudes.csv")
+        }
+        startActivityForResult(intent, exportRequestCode)
+    }
+
     private fun exportRequests() {
         val snapshot = synchronized(requestLog) { requestLog.toList() }
         if (snapshot.isEmpty()) {
@@ -1254,7 +1293,7 @@ class MainActivity : Activity() {
                 output.write(pendingExport.toByteArray(Charsets.UTF_8))
             } ?: error("No se pudo abrir el archivo")
         }.onSuccess {
-            toast("JSON exportado correctamente")
+            toast("Archivo exportado correctamente")
         }.onFailure {
             toast("No se pudo exportar: ${it.message ?: "error"}")
         }
