@@ -15,6 +15,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.CookieManager
 import android.widget.FrameLayout
 import android.widget.Button
 import android.widget.EditText
@@ -197,6 +198,9 @@ class MainActivity : Activity() {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.databaseEnabled = true
+            // Mantiene cookies de sesión y permite cookies de terceros cuando un reproductor las necesita.
+            CookieManager.getInstance().setAcceptCookie(true)
+            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
             settings.loadsImagesAutomatically = true
             settings.javaScriptCanOpenWindowsAutomatically = true
             settings.setSupportMultipleWindows(false)
@@ -249,7 +253,28 @@ class MainActivity : Activity() {
                 }
 
                 override fun onReceivedHttpError(view: WebView?, request: WebResourceRequest?, errorResponse: WebResourceResponse?) {
-                    if (request != null) addRequest("HTTP ${errorResponse?.statusCode ?: "?"} ${request.method} ${request.url}")
+                    if (request != null) {
+                        val code = errorResponse?.statusCode ?: 0
+                        val address = request.url.toString()
+                        addRequest("HTTP $code ${request.method} ${if (isAntiBotUrl(address.lowercase())) "[ANTI-BOT]" else ""} $address")
+                        if (request.isForMainFrame && code in listOf(403, 429, 503)) {
+                            runOnUiThread {
+                                statusText.text = when (code) {
+                                    403 -> "Acceso rechazado (403) · puede ser Cloudflare o permisos del sitio"
+                                    429 -> "Límite de solicitudes (429) · esperá antes de reintentar"
+                                    else -> "Respuesta 503 · el sitio puede estar bajo protección o temporalmente caído"
+                                }
+                            }
+                        }
+                    }
+                }
+
+                override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: android.webkit.WebResourceError?) {
+                    super.onReceivedError(view, request, error)
+                    if (request?.isForMainFrame == true) {
+                        addRequest("ERROR NAVEGACIÓN ${error?.errorCode}: ${error?.description} · ${request.url}")
+                        runOnUiThread { statusText.text = "Error de navegación · ${error?.description ?: "sin detalles"}" }
+                    }
                 }
 
                 override fun onPageFinished(view: WebView?, url: String?) {
@@ -264,6 +289,31 @@ class MainActivity : Activity() {
                     }
                     switchingTab = false
                     statusText.text = "Navegación terminada · registrando recursos…"
+                    // Diagnóstico visible de páginas de desafío; no intenta resolver ni eludir el control.
+                    view?.evaluateJavascript(
+                        """(function(){
+                            var title = (document.title || '').toLowerCase();
+                            var body = ((document.body && document.body.innerText) || '').slice(0,12000).toLowerCase();
+                            var url = location.href.toLowerCase();
+                            var signals = ['just a moment', 'checking your browser', 'verify you are human',
+                                'performing security verification', 'cf-chl-', 'challenge-platform',
+                                'attention required! | cloudflare', 'enable javascript and cookies to continue'];
+                            var found = signals.some(function(s){ return title.indexOf(s) >= 0 || body.indexOf(s) >= 0 || url.indexOf(s) >= 0; });
+                            return JSON.stringify({challenge:found,title:document.title || '',url:location.href});
+                        })()"""
+                    ) { value ->
+                        runCatching {
+                            val decoded = org.json.JSONTokener(value).nextValue() as? String ?: "{}"
+                            val diagnostic = org.json.JSONObject(decoded)
+                            if (diagnostic.optBoolean("challenge")) {
+                                addRequest("CLOUDFLARE/ANTI-BOT DETECTADO · ${diagnostic.optString("title")} · ${diagnostic.optString("url")}")
+                                runOnUiThread {
+                                    statusText.text = "Posible desafío anti-bot detectado · revisá cookies/JavaScript o abrí el sitio en su navegador compatible"
+                                    refreshRequestText()
+                                }
+                            }
+                        }
+                    }
                     // Instala observadores pasivos para las siguientes interacciones del usuario.
                     // No resuelve ni evita desafíos de acceso.
                     view?.evaluateJavascript(
@@ -1008,8 +1058,14 @@ class MainActivity : Activity() {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
 
+    override fun onPause() {
+        if (::browser.isInitialized) CookieManager.getInstance().flush()
+        super.onPause()
+    }
+
     override fun onDestroy() {
         mainHandler.removeCallbacks(requestPollRunnable)
+        if (::browser.isInitialized) CookieManager.getInstance().flush()
         executor.shutdownNow()
         browser.destroy()
         super.onDestroy()
