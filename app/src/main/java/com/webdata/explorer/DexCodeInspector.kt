@@ -7,7 +7,10 @@ import com.android.tools.smali.dexlib2.iface.reference.FieldReference
 import com.android.tools.smali.dexlib2.iface.reference.MethodReference
 import com.android.tools.smali.dexlib2.iface.reference.StringReference
 import com.android.tools.smali.dexlib2.iface.reference.TypeReference
+import com.android.tools.smali.baksmali.Baksmali
+import com.android.tools.smali.baksmali.BaksmaliOptions
 import java.io.ByteArrayInputStream
+import java.io.File
 
 /** Bounded structural DEX reader. It produces a Smali-like listing and never executes the APK. */
 object DexCodeInspector {
@@ -22,7 +25,7 @@ object DexCodeInspector {
         val warning: String? = null
     )
 
-    fun inspect(bytes: ByteArray): Result {
+    fun inspect(bytes: ByteArray, cacheDir: File? = null): Result {
         val strings = linkedSetOf<String>()
         val endpoints = linkedSetOf<String>()
         val libraries = linkedSetOf<String>()
@@ -109,12 +112,45 @@ object DexCodeInspector {
                 listing.appendLine()
                 listing.appendLine("# LISTADO TRUNCADO por límites de seguridad/rendimiento.")
             }
-            return Result(classCount, methodCount, invokeCount, strings, endpoints, libraries, listing.toString())
+            val actualSmali = if (cacheDir != null) disassemble(bytes, cacheDir) else ""
+            val finalListing = actualSmali.ifBlank { listing.toString() }
+            return Result(classCount, methodCount, invokeCount, strings, endpoints, libraries, finalListing)
         } catch (e: Exception) {
             return Result(
                 classCount, methodCount, invokeCount, strings, endpoints, libraries, listing.toString(),
                 "No se pudo interpretar este DEX: ${e.javaClass.simpleName}: ${e.message ?: "sin detalles"}"
             )
+        }
+    }
+
+    private fun disassemble(bytes: ByteArray, cacheDir: File): String {
+        val marker = runCatching { File.createTempFile("wdx-smali-", ".tmp", cacheDir) }.getOrNull()
+            ?: return ""
+        marker.delete()
+        if (!marker.mkdirs()) return ""
+        return try {
+            val dex = DexBackedDexFile.fromInputStream(Opcodes.getDefault(), ByteArrayInputStream(bytes))
+            val options = BaksmaliOptions()
+            val success = Baksmali.disassembleDexFile(dex, marker, 1, options, null)
+            if (!success) return ""
+            val files = marker.walkTopDown()
+                .filter { it.isFile && it.extension.equals("smali", true) }
+                .sortedBy { it.relativeTo(marker).path }
+                .take(200)
+                .toList()
+            val out = StringBuilder("# Smali descompilado por baksmali (muestra limitada)\\n")
+            for (file in files) {
+                if (out.length >= 100_000) break
+                out.appendLine()
+                out.appendLine("# ARCHIVO: ${file.relativeTo(marker).path}")
+                val remaining = (100_000 - out.length).coerceAtLeast(0)
+                if (remaining > 0) out.append(file.readText(Charsets.UTF_8).take(minOf(remaining, 8_000)))
+            }
+            if (files.isEmpty()) "" else out.toString()
+        } catch (_: Exception) {
+            ""
+        } finally {
+            marker.deleteRecursively()
         }
     }
 
