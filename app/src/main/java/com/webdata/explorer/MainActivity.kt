@@ -484,8 +484,7 @@ class MainActivity : Activity() {
                     }
                     // Instala observadores pasivos para las siguientes interacciones del usuario.
                     // No resuelve ni evita desafíos de acceso.
-                    view?.evaluateJavascript(networkInstrumentationScript)
-                    ) { value ->
+                    view?.evaluateJavascript(networkInstrumentationScript) { value ->
                         runCatching {
                             val decoded = org.json.JSONTokener(value).nextValue() as? String ?: "{}"
                             val payload = org.json.JSONObject(decoded)
