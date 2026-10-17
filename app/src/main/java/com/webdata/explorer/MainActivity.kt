@@ -54,11 +54,19 @@ class MainActivity : Activity() {
             browser.evaluateJavascript(
                 """(function(){
                     try {
-                        var resources = performance.getEntriesByType('resource').map(function(e){return e.name;});
+                        var entries = performance.getEntriesByType('resource');
+                        var cursor = window.__wdxResCursor || 0;
+                        var resources = entries.slice(cursor).map(function(e){return e.name;});
+                        window.__wdxResCursor = entries.length;
+                        var seen = window.__wdxMediaSeen || (window.__wdxMediaSeen = {});
                         var media = Array.prototype.slice.call(document.querySelectorAll('video, audio, source')).map(function(e){
                             return e.currentSrc || e.src || e.getAttribute('src') || '';
-                        }).filter(Boolean);
-                        return JSON.stringify({resources:resources, media:media, network:window.__wdxNet || []});
+                        }).filter(function(url){ if (!url || seen[url]) return false; seen[url] = true; return true; });
+                        var net = window.__wdxNet || [];
+                        var netCursor = window.__wdxNetCursor || 0;
+                        var network = net.slice(netCursor);
+                        window.__wdxNetCursor = net.length;
+                        return JSON.stringify({resources:resources, media:media, network:network});
                     } catch(e) { return JSON.stringify({error:String(e)}); }
                 })()""".trimIndent()
             ) { value ->
@@ -561,6 +569,9 @@ class MainActivity : Activity() {
         }
     }
 
+    private val saveRequestLogRunnable = Runnable { saveRequestLog() }
+    private val refreshRequestTextRunnable = Runnable { if (::requestText.isInitialized) refreshRequestText() }
+
     private fun addRequest(line: String) {
         var changed = false
         synchronized(requestLog) {
@@ -570,8 +581,14 @@ class MainActivity : Activity() {
                 changed = true
             }
         }
-        if (changed) saveRequestLog()
-        runOnUiThread { refreshRequestText() }
+        if (changed) {
+            // Agrupar escrituras y actualizaciones de UI para no bloquear la navegación
+            // cuando una página genera cientos de recursos.
+            mainHandler.removeCallbacks(saveRequestLogRunnable)
+            mainHandler.postDelayed(saveRequestLogRunnable, 700)
+            mainHandler.removeCallbacks(refreshRequestTextRunnable)
+            mainHandler.postDelayed(refreshRequestTextRunnable, 250)
+        }
     }
 
     private fun requestStore() = getSharedPreferences("webdata_scan", Context.MODE_PRIVATE)
