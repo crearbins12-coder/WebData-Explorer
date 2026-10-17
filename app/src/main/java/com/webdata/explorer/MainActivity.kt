@@ -156,20 +156,85 @@ class MainActivity : Activity() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
                     statusText.text = "Navegación terminada · registrando recursos…"
+                    // Instala observadores pasivos para las siguientes interacciones del usuario.
+                    // No resuelve ni evita desafíos de acceso.
                     view?.evaluateJavascript(
-                        "(function(){return JSON.stringify(performance.getEntriesByType('resource').map(function(e){return e.name;}));})()"
+                        """(function(){
+                            try {
+                                if (!window.__wdxInstalled) {
+                                    window.__wdxInstalled = true;
+                                    window.__wdxNet = [];
+                                    var record = function(kind, url, status) {
+                                        try {
+                                            var absolute = new URL(String(url), location.href).href;
+                                            window.__wdxNet.push({kind:kind,url:absolute,status:status || 0});
+                                            if (window.__wdxNet.length > 200) window.__wdxNet.shift();
+                                        } catch(e) {}
+                                    };
+                                    if (window.fetch) {
+                                        var originalFetch = window.fetch;
+                                        window.fetch = function() {
+                                            var input = arguments[0];
+                                            var url = input && input.url ? input.url : input;
+                                            return originalFetch.apply(this, arguments).then(function(response) {
+                                                record('FETCH', url, response.status);
+                                                return response;
+                                            }, function(error) {
+                                                record('FETCH_ERROR', url, 0);
+                                                throw error;
+                                            });
+                                        };
+                                    }
+                                    var originalOpen = XMLHttpRequest.prototype.open;
+                                    var originalSend = XMLHttpRequest.prototype.send;
+                                    XMLHttpRequest.prototype.open = function(method, url) {
+                                        this.__wdxMethod = method;
+                                        this.__wdxUrl = url;
+                                        return originalOpen.apply(this, arguments);
+                                    };
+                                    XMLHttpRequest.prototype.send = function() {
+                                        var xhr = this;
+                                        xhr.addEventListener('loadend', function() {
+                                            record('XHR ' + (xhr.__wdxMethod || 'GET'), xhr.__wdxUrl || '', xhr.status);
+                                        });
+                                        return originalSend.apply(this, arguments);
+                                    };
+                                }
+                                var resources = performance.getEntriesByType('resource').map(function(e){return e.name;});
+                                var media = Array.prototype.slice.call(document.querySelectorAll('video, audio, source')).map(function(e){
+                                    return e.currentSrc || e.src || e.getAttribute('src') || '';
+                                }).filter(Boolean);
+                                return JSON.stringify({resources:resources, media:media, network:window.__wdxNet || []});
+                            } catch(e) { return JSON.stringify({error:String(e)}); }
+                        })()""".trimIndent()
                     ) { value ->
                         runCatching {
-                            val decoded = org.json.JSONTokener(value).nextValue() as? String ?: "[]"
-                            val arr = org.json.JSONArray(decoded)
-                            for (i in 0 until arr.length()) {
-                                val item = arr.optString(i)
+                            val decoded = org.json.JSONTokener(value).nextValue() as? String ?: "{}"
+                            val payload = org.json.JSONObject(decoded)
+                            val resources = payload.optJSONArray("resources") ?: org.json.JSONArray()
+                            for (i in 0 until resources.length()) {
+                                val item = resources.optString(i)
                                 if (item.startsWith("http://") || item.startsWith("https://")) addRequest("RECURSO DOM [${classifyRequest(item)}] $item")
+                            }
+                            val media = payload.optJSONArray("media") ?: org.json.JSONArray()
+                            for (i in 0 until media.length()) {
+                                val item = media.optString(i)
+                                if (item.startsWith("http://") || item.startsWith("https://")) addRequest("MEDIO DOM [${classifyRequest(item)}] $item")
+                            }
+                            val network = payload.optJSONArray("network") ?: org.json.JSONArray()
+                            for (i in 0 until network.length()) {
+                                val item = network.optJSONObject(i) ?: continue
+                                val kind = item.optString("kind", "FETCH")
+                                val url = item.optString("url", "")
+                                val code = item.optInt("status", 0)
+                                if (url.startsWith("http://") || url.startsWith("https://")) {
+                                    addRequest("$kind HTTP $code [${classifyRequest(url)}] $url")
+                                }
                             }
                         }
                         runOnUiThread {
                             refreshRequestText()
-                            statusText.text = "Navegador listo · ${requestLog.size} solicitudes observadas"
+                            statusText.text = "Navegador listo · ${requestLog.size} solicitudes observadas. Recargá para registrar fetch/XHR desde el inicio."
                         }
                     }
                 }
