@@ -181,9 +181,51 @@ class MainActivity : Activity() {
         resultScroll = ScrollView(this).apply { addView(resultText) }
         browser = WebView(this).apply {
             visibility = View.GONE
+            isClickable = true
+            isFocusable = true
+            isFocusableInTouchMode = true
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
+            settings.databaseEnabled = true
             settings.loadsImagesAutomatically = true
+            settings.javaScriptCanOpenWindowsAutomatically = true
+            settings.setSupportMultipleWindows(false)
+            settings.mediaPlaybackRequiresUserGesture = false
+            webChromeClient = object : android.webkit.WebChromeClient() {
+                override fun onConsoleMessage(message: android.webkit.ConsoleMessage): Boolean {
+                    if (message.messageLevel() == android.webkit.ConsoleMessage.MessageLevel.ERROR) {
+                        addRequest("JS ERROR ${message.sourceId()}:${message.lineNumber()} ${message.message()}")
+                    }
+                    return true
+                }
+
+                override fun onJsAlert(view: WebView?, url: String?, message: String?, result: android.webkit.JsResult?): Boolean {
+                    android.app.AlertDialog.Builder(this@MainActivity)
+                        .setTitle("Mensaje de la página").setMessage(message.orEmpty())
+                        .setPositiveButton("Aceptar") { _, _ -> result?.confirm() }
+                        .setOnCancelListener { result?.cancel() }.show()
+                    return true
+                }
+
+                override fun onJsConfirm(view: WebView?, url: String?, message: String?, result: android.webkit.JsResult?): Boolean {
+                    android.app.AlertDialog.Builder(this@MainActivity)
+                        .setTitle("Confirmar").setMessage(message.orEmpty())
+                        .setPositiveButton("Aceptar") { _, _ -> result?.confirm() }
+                        .setNegativeButton("Cancelar") { _, _ -> result?.cancel() }
+                        .setOnCancelListener { result?.cancel() }.show()
+                    return true
+                }
+
+                override fun onJsPrompt(view: WebView?, url: String?, message: String?, defaultValue: String?, result: android.webkit.JsPromptResult?): Boolean {
+                    val input = EditText(this@MainActivity).apply { setText(defaultValue.orEmpty()) }
+                    android.app.AlertDialog.Builder(this@MainActivity)
+                        .setTitle(message.orEmpty()).setView(input)
+                        .setPositiveButton("Aceptar") { _, _ -> result?.confirm(input.text.toString()) }
+                        .setNegativeButton("Cancelar") { _, _ -> result?.cancel() }
+                        .setOnCancelListener { result?.cancel() }.show()
+                    return true
+                }
+            }
             webViewClient = object : WebViewClient() {
                 override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
                     if (request != null) {
@@ -416,6 +458,12 @@ class MainActivity : Activity() {
         browserMode = true
         resultScroll.visibility = View.GONE
         (browser.tag as? View)?.visibility = View.VISIBLE
+        // El WebView estaba quedando en GONE aunque el panel padre se mostrara.
+        browser.visibility = View.VISIBLE
+        browser.isClickable = true
+        browser.isFocusable = true
+        browser.isFocusableInTouchMode = true
+        browser.requestFocus()
         statusText.text = "Navegador integrado · solicitudes HTTP observadas"
         var raw = urlInput.text.toString().trim()
 
