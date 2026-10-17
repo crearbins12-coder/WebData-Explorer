@@ -330,6 +330,43 @@ class MainActivity : Activity() {
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(navButtons)
 
+        root.addView(Button(this).apply {
+            text = "🧰  HERRAMIENTAS Y ANÁLISIS  ▾"
+            textSize = 13f
+            setOnClickListener {
+                val tools = arrayOf(
+                    "🔌  APIs detectadas",
+                    "🎬  Recursos multimedia",
+                    "🗂️  Sesiones guardadas",
+                    "🕘  Historial de páginas",
+                    "⭐  Favoritos",
+                    "🩺  Diagnóstico del navegador",
+                    "🧪  Probar captura GET/POST",
+                    "📄  Exportar solicitudes CSV",
+                    "⚙️  Ajustes de captura"
+                )
+                android.app.AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Herramientas")
+                    .setItems(tools) { _, which ->
+                        when (which) {
+                            0 -> showApiEndpoints()
+                            1 -> showMediaRequests()
+                            2 -> showSavedSessions()
+                            3 -> showSavedPages(false)
+                            4 -> showSavedPages(true)
+                            5 -> showDiagnostics()
+                            6 -> runCaptureTest()
+                            7 -> exportRequestsCsv()
+                            8 -> showSettings()
+                        }
+                    }
+                    .setNegativeButton("Cerrar", null)
+                    .show()
+            }
+        }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = dp(5) })
+
         val actionButtons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         actionButtons.addView(Button(this).apply {
             text = "📋 COPIAR"
@@ -348,6 +385,14 @@ class MainActivity : Activity() {
             setOnClickListener { exportRequests() }
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(actionButtons)
+
+        root.addView(TextView(this).apply {
+            text = "ESTADO"
+            textSize = 10f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setTextColor(Color.rgb(130, 160, 204))
+            setPadding(dp(3), dp(8), 0, 0)
+        })
 
         statusText = TextView(this).apply {
             text = "Listo para analizar una URL pública."
