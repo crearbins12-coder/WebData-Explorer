@@ -418,8 +418,29 @@ class MainActivity : Activity() {
         (browser.tag as? View)?.visibility = View.VISIBLE
         statusText.text = "Navegador integrado · solicitudes HTTP observadas"
         var raw = urlInput.text.toString().trim()
-        if (raw.isBlank()) { toast("Pegá una URL primero"); return }
-        if (!raw.startsWith("http://") && !raw.startsWith("https://")) raw = "https://$raw"
+
+        // El botón NAVEGADOR debe abrir el navegador incluso si todavía no hay URL.
+        if (raw.isBlank()) {
+            if (activeTabIndex !in browserTabs.indices) {
+                browserTabs.add("")
+                activeTabIndex = browserTabs.lastIndex
+                saveBrowserTabs()
+            }
+            urlInput.hint = "Buscar o escribir una dirección web"
+            if (browser.url == null || browser.url == "about:blank") {
+                switchingTab = true
+                browser.loadUrl("about:blank")
+                statusText.text = "Navegador listo · escribí una dirección arriba"
+            }
+            refreshRequestText()
+            return
+        }
+        if (!raw.startsWith("http://") && !raw.startsWith("https://")) {
+            // Si no parece un dominio, convertirlo en una búsqueda web.
+            val looksLikeHost = raw.contains(".") && !raw.contains(" ")
+            raw = if (looksLikeHost) "https://$raw"
+                else "https://www.google.com/search?q=" + java.net.URLEncoder.encode(raw, "UTF-8")
+        }
         val parsed = runCatching { URL(raw) }.getOrNull()
         if (parsed == null || (parsed.protocol != "http" && parsed.protocol != "https")) {
             toast("La URL no es válida"); return
