@@ -351,12 +351,12 @@ class MainActivity : Activity() {
   function redact(s) {
    s=String(s||'').slice(0,LIMIT);
    s=s.replace(/(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|secret)(\s*[:=]\s*)([^\r\n,;&]+)/ig,'$1$2[REDACTADO]');
-   s=s.replace(/("(?:password|passwd|token|access_token|refresh_token|api_key|secret|authorization|cookie)"\s*:\s*")[^"]*(")/ig,'$1[REDACTADO]$2');
+   s=s.replace(/("(?:password|passwd|token|access_token|refresh_token|api_key|secret|authorization|cookie|session|jwt|credential|signature)"\s*:\s*")[^"]*(")/ig,'$1[REDACTADO]$2');
    return s;
   }
   function headersText(headers) {
    var out=[];
-   try { headers.forEach(function(v,k){ out.push(k+': '+(/^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|.*token.*|.*secret.*)$/i.test(k)?'[REDACTADO]':v)); }); } catch(e) {}
+   try { headers.forEach(function(v,k){ out.push(k+': '+(/^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|.*token.*|.*secret.*|.*session.*|.*credential.*|.*signature.*|.*jwt.*)$/i.test(k)?'[REDACTADO]':v)); }); } catch(e) {}
    return out.join('\n').slice(0,LIMIT);
   }
   function readLimited(stream) {
@@ -443,7 +443,7 @@ class MainActivity : Activity() {
    return originalOpen.apply(this,arguments);
   };
   XMLHttpRequest.prototype.setRequestHeader=function(name,value) {
-   try { this.__wdxReqHeaders.push(name+': '+(/^(authorization|cookie|x-api-key|.*token.*|.*secret.*)$/i.test(name)?'[REDACTADO]':value)); } catch(e) {}
+   try { this.__wdxReqHeaders.push(name+': '+(/^(authorization|cookie|x-api-key|.*token.*|.*secret.*|.*session.*|.*credential.*|.*signature.*|.*jwt.*)$/i.test(name)?'[REDACTADO]':value)); } catch(e) {}
    return originalSetHeader.apply(this,arguments);
   };
   XMLHttpRequest.prototype.send=function(body) {
