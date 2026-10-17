@@ -415,11 +415,11 @@ class MainActivity : Activity() {
    window.fetch=function(input,init) {
     var url=input&&input.url?input.url:input;
     var method=(init&&init.method)||(input&&input.method)||'GET';
-    var headers=(init&&init.headers)||(input&&input.headers);
-    var reqHeaders=headersText(new Headers(headers||{}));
+    var headers=(init&&init.headers)||(input&&input.headers), reqHeaders='';
+    try { reqHeaders=headersText(new Headers(headers||{})); } catch(e) { reqHeaders='[Encabezados no accesibles]'; }
     var reqBodyPromise=Promise.resolve('');
     var body=(init&&Object.prototype.hasOwnProperty.call(init,'body'))?init.body:null;
-    if (body!==null && body!==undefined) reqBodyPromise=safeBody(body,(new Headers(headers||{})).get('content-type')||'');
+    if (body!==null && body!==undefined) { var reqCt=''; try { reqCt=new Headers(headers||{}).get('content-type')||''; } catch(e) {} reqBodyPromise=safeBody(body,reqCt); }
     else if (input&&input.clone&&input.body) { try { reqBodyPromise=readLimited(input.clone().body); } catch(e) { reqBodyPromise=Promise.resolve('[Cuerpo de Request no accesible]'); } }
     var started=Date.now();
     return originalFetch.apply(this,arguments).then(function(response) {
