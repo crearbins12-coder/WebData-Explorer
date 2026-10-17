@@ -43,6 +43,9 @@ class MainActivity : Activity() {
     private var requestFilter = "TODAS"
     private var pendingExport = ""
     private val exportRequestCode = 4501
+    private val browserTabs = mutableListOf<String>()
+    private var activeTabIndex = -1
+    private var switchingTab = false
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val requestPollRunnable = object : Runnable {
@@ -199,10 +202,12 @@ class MainActivity : Activity() {
 
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
-                    if (!url.isNullOrBlank()) {
+                    if (!url.isNullOrBlank() && (url.startsWith("https://") || url.startsWith("http://"))) {
                         urlInput.setText(url)
+                        if (activeTabIndex in browserTabs.indices && !switchingTab) browserTabs[activeTabIndex] = url
                         saveHistory(url)
                     }
+                    switchingTab = false
                     statusText.text = "Navegación terminada · registrando recursos…"
                     // Instala observadores pasivos para las siguientes interacciones del usuario.
                     // No resuelve ni evita desafíos de acceso.
@@ -333,6 +338,8 @@ class MainActivity : Activity() {
                 control("★") { toggleFavorite() }
                 control("HIST.") { showSavedPages(false) }
                 control("FAV.") { showSavedPages(true) }
+                control("+ PESTAÑA") { newBrowserTab() }
+                control("PESTAÑAS") { showBrowserTabs() }
             }
             addView(browserControls)
             addView(browser, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -386,9 +393,50 @@ class MainActivity : Activity() {
             toast("La URL no es válida"); return
         }
         urlInput.setText(raw)
+        if (activeTabIndex !in browserTabs.indices) { browserTabs.add(raw); activeTabIndex = browserTabs.lastIndex }
+        else browserTabs[activeTabIndex] = raw
         requestLog.clear()
         refreshRequestText()
         browser.loadUrl(raw)
+    }
+
+    private fun newBrowserTab() {
+        if (browserTabs.size >= 10) { toast("Máximo 10 pestañas"); return }
+        browserTabs.add("")
+        activeTabIndex = browserTabs.lastIndex
+        requestLog.clear()
+        refreshRequestText()
+        urlInput.setText("")
+        urlInput.hint = "URL de la pestaña " + (activeTabIndex + 1)
+        switchingTab = true
+        browser.loadUrl("about:blank")
+        statusText.text = "Pestaña " + (activeTabIndex + 1) + " creada"
+    }
+
+    private fun showBrowserTabs() {
+        if (browserTabs.isEmpty()) { toast("No hay pestañas abiertas"); return }
+        val labels = browserTabs.mapIndexed { index, url ->
+            val title = if (url.isBlank()) "Pestaña vacía" else runCatching { URL(url).host + URL(url).path }.getOrDefault(url)
+            (if (index == activeTabIndex) "● " else "") + (index + 1) + ". " + title.take(75)
+        }.toTypedArray()
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Pestañas abiertas (" + browserTabs.size + "/10)")
+            .setItems(labels) { _, which -> switchBrowserTab(which) }
+            .setPositiveButton("Nueva") { _, _ -> newBrowserTab() }
+            .setNegativeButton("Cerrar", null)
+            .show()
+    }
+
+    private fun switchBrowserTab(index: Int) {
+        if (index !in browserTabs.indices) return
+        activeTabIndex = index
+        val url = browserTabs[index]
+        requestLog.clear()
+        refreshRequestText()
+        urlInput.setText(url)
+        switchingTab = true
+        browser.loadUrl(if (url.isBlank()) "about:blank" else url)
+        statusText.text = "Pestaña " + (index + 1) + "/" + browserTabs.size
     }
 
     private fun showAnalyzer() {
