@@ -59,6 +59,7 @@ class MainActivity : Activity() {
     private var requestSearchQuery = ""
     private var pendingExport = ""
     private val exportRequestCode = 4501
+    private val apkAnalyzerRequestCode = 4502
     private val browserTabs = mutableListOf<String>()
     private var activeTabIndex = -1
     private var switchingTab = false
@@ -357,7 +358,8 @@ class MainActivity : Activity() {
                     "🌐  Pruebas HTTP directas GET/POST",
                     "🧪  Probar captura del navegador (WebView)",
                     "📄  Exportar solicitudes CSV",
-                    "⚙️  Ajustes de captura"
+                    "⚙️  Ajustes de captura",
+                    "🔬  Analizador de APK (DEX, URLs y APIs)"
                 )
                 android.app.AlertDialog.Builder(this@MainActivity)
                     .setTitle("Herramientas")
@@ -373,6 +375,7 @@ class MainActivity : Activity() {
                             7 -> runCaptureTest()
                             8 -> exportRequestsCsv()
                             9 -> showSettings()
+                            10 -> chooseApkForAnalysis()
                         }
                     }
                     .setNegativeButton("Cerrar", null)
@@ -1981,8 +1984,13 @@ class MainActivity : Activity() {
     @Deprecated("Deprecated in Android API, retained for broad device compatibility")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != exportRequestCode || resultCode != RESULT_OK) return
+        if (resultCode != RESULT_OK) return
         val uri = data?.data ?: return
+        if (requestCode == apkAnalyzerRequestCode) {
+            analyzeSelectedApk(uri)
+            return
+        }
+        if (requestCode != exportRequestCode) return
         runCatching {
             contentResolver.openOutputStream(uri)?.use { output ->
                 output.write(pendingExport.toByteArray(Charsets.UTF_8))
@@ -1992,6 +2000,63 @@ class MainActivity : Activity() {
         }.onFailure {
             toast("No se pudo exportar: ${it.message ?: "error"}")
         }
+    }
+
+    private fun chooseApkForAnalysis() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/vnd.android.package-archive"
+        }
+        runCatching {
+            startActivityForResult(intent, apkAnalyzerRequestCode)
+        }.onFailure {
+            toast("No se pudo abrir el selector de archivos: ${it.message ?: "error"}")
+        }
+    }
+
+    private fun analyzeSelectedApk(uri: android.net.Uri) {
+        toast("Analizando APK localmente…")
+        executor.execute {
+            val report = runCatching { ApkAnalyzer.analyze(this, uri) }
+                .getOrElse { "ERROR AL ANALIZAR APK\\n${it.javaClass.simpleName}: ${it.message ?: "sin detalles"}" }
+            runOnUiThread { showApkAnalysisReport(report) }
+        }
+    }
+
+    private fun showApkAnalysisReport(report: String) {
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+        }
+        panel.addView(TextView(this).apply {
+            text = "Análisis local de solo lectura. Las URLs encontradas son indicios, no APIs verificadas."
+            textSize = 12f
+            setPadding(0, 0, 0, dp(8))
+        })
+        val output = TextView(this).apply {
+            text = report
+            textSize = 11f
+            setTextIsSelectable(true)
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+            setBackgroundColor(Color.rgb(25, 32, 47))
+        }
+        val scroll = ScrollView(this).apply {
+            addView(output)
+            isFillViewport = true
+        }
+        panel.addView(scroll, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(440)
+        ))
+        android.app.AlertDialog.Builder(this)
+            .setTitle("🔬 Resultado del análisis APK")
+            .setView(panel)
+            .setNeutralButton("COPIAR TODO") { _, _ ->
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("Informe APK", report))
+                toast("Informe del APK copiado")
+            }
+            .setPositiveButton("CERRAR", null)
+            .show()
     }
 
     private fun analyze() {
