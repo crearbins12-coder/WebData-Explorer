@@ -90,6 +90,7 @@ object ApkAnalyzer {
         val fileEntries = mutableListOf<String>()
         val nativeEntries = linkedSetOf<String>()
         val libraries = linkedSetOf<String>()
+        val dexResults = mutableListOf<DexCodeInspector.Result>()
         var totalDexBytes = 0L
 
         ZipFile(apk).use { zip ->
@@ -118,6 +119,11 @@ object ApkAnalyzer {
                             totalDexBytes += readTotal
                             out.toByteArray()
                         }
+                        val dexResult = DexCodeInspector.inspect(bytes)
+                        dexResults.add(dexResult)
+                        allUrls.addAll(dexResult.endpoints.filter { it.startsWith("http://") || it.startsWith("https://") })
+                        endpointPaths.addAll(dexResult.endpoints.filterNot { it.startsWith("http://") || it.startsWith("https://") })
+                        libraries.addAll(dexResult.libraries)
                         val strings = printableStrings(bytes)
                         strings.forEach { value ->
                             URL_REGEX.findAll(value).forEach { match ->
@@ -135,6 +141,16 @@ object ApkAnalyzer {
                 }
             }
         }
+
+        report.appendLine()
+        report.appendLine("=== CLASES, MÉTODOS E INSTRUCCIONES DEX ===")
+        report.appendLine("Clases estructuradas: ${dexResults.sumOf { it.classCount }}")
+        report.appendLine("Métodos examinados: ${dexResults.sumOf { it.methodCount }}")
+        report.appendLine("Llamadas invoke detectadas: ${dexResults.sumOf { it.invokeCount }}")
+        dexResults.mapNotNull { it.warning }.forEach { report.appendLine("Aviso: $it") }
+        report.appendLine("Muestra de instrucciones tipo Smali (límite de salida):")
+        dexResults.firstOrNull()?.listing?.take(30000)?.let { report.appendLine(it) }
+        if (dexResults.isEmpty()) report.appendLine("No se pudo analizar ningún DEX dentro del límite configurado.")
 
         report.appendLine()
         report.appendLine("=== ARCHIVOS INTERNOS ===")
@@ -175,9 +191,9 @@ object ApkAnalyzer {
 
         report.appendLine()
         report.appendLine("=== LÍMITES DEL ANÁLISIS ===")
-        report.appendLine("Este primer escáner lee archivos ZIP y cadenas ASCII imprimibles de DEX; no ejecuta el APK.")
+        report.appendLine("El analizador ya interpreta la estructura DEX y muestra clases, métodos e instrucciones con referencias; la salida Smali es una vista limitada, no una reconstrucción Java completa.")
         report.appendLine("Las URLs/rutas son pistas, no endpoints confirmados. Puede perder cadenas codificadas, comprimidas o construidas en tiempo de ejecución.")
-        report.appendLine("Aún no genera descompilación Java ni Smali. Esa función requiere integrar y validar una herramienta de descompilación compatible con Android.")
+        report.appendLine("No se ejecuta ni instala el APK. La descompilación Java completa y el renderizado Smali fiel requieren una etapa adicional de integración y validación.")
         return report.toString()
     }
 
