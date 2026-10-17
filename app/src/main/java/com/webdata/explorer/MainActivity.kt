@@ -354,7 +354,8 @@ class MainActivity : Activity() {
                     "🕘  Historial de páginas",
                     "⭐  Favoritos",
                     "🩺  Diagnóstico del navegador",
-                    "🧪  Probar captura GET/POST",
+                    "🌐  Pruebas HTTP directas GET/POST",
+                    "🧪  Probar captura del navegador (WebView)",
                     "📄  Exportar solicitudes CSV",
                     "⚙️  Ajustes de captura"
                 )
@@ -368,9 +369,10 @@ class MainActivity : Activity() {
                             3 -> showSavedPages(false)
                             4 -> showSavedPages(true)
                             5 -> showDiagnostics()
-                            6 -> runCaptureTest()
-                            7 -> exportRequestsCsv()
-                            8 -> showSettings()
+                            6 -> showHttpTests()
+                            7 -> runCaptureTest()
+                            8 -> exportRequestsCsv()
+                            9 -> showSettings()
                         }
                     }
                     .setNegativeButton("Cerrar", null)
@@ -1611,8 +1613,88 @@ class MainActivity : Activity() {
             .show()
     }
 
+    private fun showHttpTests() {
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+        }
+        val explanation = TextView(this).apply {
+            text = "Estas pruebas usan HttpURLConnection directamente. No pasan por WebView ni demuestran que el navegador capture su propio tráfico. Endpoint público: httpbin.org."
+            textSize = 12f
+            setPadding(0, 0, 0, dp(8))
+        }
+        panel.addView(explanation)
+
+        fun addProbeSection(title: String, method: String, url: String, body: String) {
+            panel.addView(TextView(this).apply {
+                text = title
+                textSize = 15f
+                setPadding(0, dp(8), 0, dp(4))
+            })
+            val output = TextView(this).apply {
+                text = "PENDIENTE · La prueba todavía no se ejecutó."
+                textSize = 11f
+                setTextIsSelectable(true)
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+                setBackgroundColor(Color.rgb(25, 32, 47))
+            }
+            val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            val runButton = Button(this).apply { text = "EJECUTAR $method" }
+            val copyButton = Button(this).apply { text = "COPIAR RESULTADO"; isEnabled = false }
+            runButton.setOnClickListener {
+                runButton.isEnabled = false
+                output.text = "EJECUTANDO $method…\nURL: $url\nMétodo: $method\nEsperando una respuesta HTTP real."
+                copyButton.isEnabled = false
+                executor.execute {
+                    val result = try {
+                        HttpProbe.execute(method, url, body)
+                    } catch (e: Exception) {
+                        HttpProbe.Result(
+                            url = url,
+                            method = method,
+                            requestBody = body,
+                            statusCode = null,
+                            responseHeaders = "",
+                            responseBody = "",
+                            durationMs = 0L,
+                            errorType = "ERROR DE CONFIGURACIÓN",
+                            errorMessage = e.message ?: e.javaClass.simpleName
+                        )
+                    }
+                    runOnUiThread {
+                        output.text = result.formatForDisplay()
+                        runButton.isEnabled = true
+                        copyButton.isEnabled = true
+                    }
+                }
+            }
+            copyButton.setOnClickListener {
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("Prueba HTTP $method", output.text))
+                toast("Resultado $method copiado")
+            }
+            actions.addView(runButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            actions.addView(copyButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            panel.addView(actions)
+            panel.addView(output)
+        }
+
+        addProbeSection("1. GET real", "GET", HttpProbe.GET_URL, "")
+        addProbeSection("2. POST real con JSON", "POST", HttpProbe.POST_URL, HttpProbe.POST_JSON)
+
+        val scroll = ScrollView(this).apply { addView(panel) }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Pruebas HTTP directas")
+            .setView(scroll)
+            .setPositiveButton("CERRAR", null)
+            .show()
+    }
+
     private fun runCaptureTest() {
-        if (!::browser.isInitialized) return
+        if (!::browser.isInitialized) {
+            toast("El navegador integrado todavía no está inicializado")
+            return
+        }
         showBrowser()
         statusText.text = "Prueba controlada: GET y POST locales…"
         val html = """
