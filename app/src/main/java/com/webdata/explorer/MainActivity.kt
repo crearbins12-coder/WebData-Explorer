@@ -2077,6 +2077,11 @@ class MainActivity : Activity() {
             "=== URLS ENCONTRADAS EN DEX ===",
             "=== POSIBLES RUTAS API ==="
         )
+        quickActions.addView(Button(this).apply {
+            text = "BUSCAR EN SMALI"
+            textSize = 10f
+            setOnClickListener { showSmaliSearchDialog(report) }
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         panel.addView(quickActions)
         val output = TextView(this).apply {
             text = report
@@ -2110,6 +2115,105 @@ class MainActivity : Activity() {
                 startActivityForResult(intent, exportRequestCode)
             }
             .setPositiveButton("CERRAR", null)
+            .show()
+    }
+
+    /**
+     * Searches the bounded Smali listing in the APK report and shows matching instructions
+     * with their enclosing class/method. This is static text analysis; it never executes code.
+     */
+    private fun showSmaliSearchDialog(report: String) {
+        val input = EditText(this).apply {
+            hint = "Ej.: baseUrl, okhttp, getInputStream, /api/"
+            singleLine = true
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+        }
+        val dialog = android.app.AlertDialog.Builder(this)
+            .setTitle("Buscar clases, métodos o instrucciones")
+            .setMessage("Busca texto dentro de la muestra Smali incluida en el informe. No es una búsqueda de todo el APK.")
+            .setView(input)
+            .setNegativeButton("CANCELAR", null)
+            .setPositiveButton("BUSCAR", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val query = input.text.toString().trim()
+                if (query.length < 2) {
+                    toast("Escribí al menos 2 caracteres")
+                    return@setOnClickListener
+                }
+                val results = searchSmaliReport(report, query)
+                if (results.isBlank()) {
+                    toast("No hubo coincidencias en la muestra Smali")
+                } else {
+                    dialog.dismiss()
+                    showSmaliSearchResults(query, results)
+                }
+            }
+        }
+        dialog.show()
+    }
+
+    private fun searchSmaliReport(report: String, query: String): String {
+        val lines = report.lines()
+        val matches = mutableListOf<String>()
+        var currentClass = ""
+        var currentMethod = ""
+        val needle = query.lowercase()
+        for ((index, line) in lines.withIndex()) {
+            if (line.trimStart().startsWith(".class ")) {
+                currentClass = line.trim()
+                currentMethod = ""
+            } else if (line.trimStart().startsWith(".method ")) {
+                currentMethod = line.trim()
+            } else if (line.trimStart().startsWith(".end method")) {
+                currentMethod = ""
+            }
+            if (line.contains(needle, ignoreCase = true)) {
+                val context = buildString {
+                    if (currentClass.isNotBlank()) appendLine(currentClass)
+                    if (currentMethod.isNotBlank()) appendLine(currentMethod)
+                    append("Línea ${index + 1}: ${line.trim()}")
+                }
+                matches.add(context)
+                if (matches.size >= 200) break
+            }
+        }
+        if (matches.isEmpty()) return ""
+        return buildString {
+            appendLine("BÚSQUEDA SMALI: $query")
+            appendLine("Coincidencias mostradas: ${matches.size}${if (matches.size == 200) " (límite de 200)" else ""}")
+            appendLine("Nota: la búsqueda cubre solo el Smali que el informe conservó.")
+            appendLine()
+            matches.forEachIndexed { i, item ->
+                appendLine("---- ${i + 1} ----")
+                appendLine(item)
+                appendLine()
+            }
+        }.take(50_000)
+    }
+
+    private fun showSmaliSearchResults(query: String, results: String) {
+        val output = TextView(this).apply {
+            text = results
+            textSize = 12f
+            setTextIsSelectable(true)
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            setBackgroundColor(Color.rgb(25, 32, 47))
+        }
+        val scroll = ScrollView(this).apply {
+            addView(output)
+            isFillViewport = true
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Coincidencias: $query")
+            .setView(scroll)
+            .setNeutralButton("COPIAR RESULTADOS") { _, _ ->
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("Búsqueda Smali: $query", results))
+                toast("Resultados Smali copiados")
+            }
+            .setNegativeButton("CERRAR", null)
             .show()
     }
 
