@@ -95,19 +95,15 @@ class MainActivity : Activity() {
                     val network = payload.optJSONArray("network") ?: org.json.JSONArray()
                     for (i in 0 until network.length()) {
                         val item = network.optJSONObject(i) ?: continue
-                        val kind = item.optString("kind", "FETCH")
-                        val method = item.optString("method", "GET")
                         val url = item.optString("url", "")
-                        val code = item.optInt("status", 0)
                         if (url.startsWith("http://") || url.startsWith("https://")) {
-                            val headers = item.optString("headers", "").trim()
-                            val jsonBody = item.optString("json", "").trim()
-                            val detail = buildString {
-                                append("$kind $method HTTP $code [${classifyRequest(url)}] $url")
-                                if (headers.isNotBlank()) append("\n  ENCABEZADOS DE RESPUESTA:\n").append(headers.lines().joinToString("\n") { "  $it" })
-                                if (jsonBody.isNotBlank()) append("\n  CUERPO JSON:\n  ").append(jsonBody.replace("\n", "\n  "))
-                            }
-                            addRequest(detail)
+                            addDetailedRequest(
+                                item.optString("kind", "FETCH"), item.optString("method", "GET"), url,
+                                item.optInt("status", 0), item.optString("requestHeaders", ""),
+                                item.optString("requestBody", ""), item.optString("responseHeaders", ""),
+                                item.optString("responseBody", ""), item.optString("contentType", ""),
+                                item.optString("captureState", "PARCIAL"), item.optString("note", "")
+                            )
                         }
                     }
                 }
@@ -467,7 +463,7 @@ class MainActivity : Activity() {
   var net=window.__wdxNet||[]; window.__wdxNetCursor=net.length;
   return JSON.stringify({resources:resources,media:media,network:net});
  } catch(e) { return JSON.stringify({error:String(e)}); }
-})()})()""".trimIndent()
+})()""".trimIndent()
                     ) { value ->
                         runCatching {
                             val decoded = org.json.JSONTokener(value).nextValue() as? String ?: "{}"
@@ -485,11 +481,15 @@ class MainActivity : Activity() {
                             val network = payload.optJSONArray("network") ?: org.json.JSONArray()
                             for (i in 0 until network.length()) {
                                 val item = network.optJSONObject(i) ?: continue
-                                val kind = item.optString("kind", "FETCH")
                                 val url = item.optString("url", "")
-                                val code = item.optInt("status", 0)
                                 if (url.startsWith("http://") || url.startsWith("https://")) {
-                                    addRequest("$kind HTTP $code [${classifyRequest(url)}] $url")
+                                    addDetailedRequest(
+                                        item.optString("kind", "FETCH"), item.optString("method", "GET"), url,
+                                        item.optInt("status", 0), item.optString("requestHeaders", ""),
+                                        item.optString("requestBody", ""), item.optString("responseHeaders", ""),
+                                        item.optString("responseBody", ""), item.optString("contentType", ""),
+                                        item.optString("captureState", "PARCIAL"), item.optString("note", "")
+                                    )
                                 }
                             }
                         }
