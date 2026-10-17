@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.graphics.Color
 import android.view.ViewGroup
 import android.view.View
@@ -36,6 +37,9 @@ class MainActivity : Activity() {
     private val requestLog = java.util.Collections.synchronizedList(mutableListOf<String>())
     private var lastReport = ""
     private var browserMode = false
+    private var requestFilter = "TODAS"
+    private var pendingExport = ""
+    private val exportRequestCode = 4501
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -91,18 +95,24 @@ class MainActivity : Activity() {
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(navButtons)
 
-        root.addView(Button(this).apply {
-            text = "COPIAR INFORME / SOLICITUDES"
+        val actionButtons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        actionButtons.addView(Button(this).apply {
+            text = "COPIAR"
             setOnClickListener {
-                val text = if (browserMode) requestLog.joinToString("\\n") else lastReport
-                if (text.isBlank()) toast("Todavía no hay datos para copiar")
+                val content = if (browserMode) synchronized(requestLog) { requestLog.joinToString("\\n") } else lastReport
+                if (content.isBlank()) toast("Todavía no hay datos para copiar")
                 else {
                     val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    clipboard.setPrimaryClip(ClipData.newPlainText("WebData Explorer", text))
+                    clipboard.setPrimaryClip(ClipData.newPlainText("WebData Explorer", content))
                     toast("Copiado al portapapeles")
                 }
             }
-        })
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        actionButtons.addView(Button(this).apply {
+            text = "EXPORTAR JSON"
+            setOnClickListener { exportRequests() }
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        root.addView(actionButtons)
 
         statusText = TextView(this).apply {
             text = "Listo para analizar una URL pública."
@@ -176,13 +186,24 @@ class MainActivity : Activity() {
             visibility = View.GONE
             addView(browser, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
             addView(TextView(this@MainActivity).apply {
-                text = "SOLICITUDES DE RED (registro limitado)"
+                text = "SOLICITUDES DE RED · FILTROS"
                 textSize = 12f
                 setTextColor(Color.rgb(120, 210, 170))
                 setPadding(dp(4), dp(5), dp(4), dp(3))
             })
+            val filters = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
+            listOf("TODAS", "API", "VIDEO", "JS", "ERRORES").forEach { filter ->
+                filters.addView(Button(this@MainActivity).apply {
+                    text = filter
+                    textSize = 9f
+                    minWidth = 0
+                    setPadding(dp(2), 0, dp(2), 0)
+                    setOnClickListener { requestFilter = filter; refreshRequestText() }
+                }, LinearLayout.LayoutParams(0, dp(40), 1f))
+            }
+            addView(filters)
             addView(ScrollView(this@MainActivity).apply { addView(requestText) },
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(145)))
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(125)))
         }
         contentFrame = FrameLayout(this)
         contentFrame.addView(resultScroll, FrameLayout.LayoutParams(
@@ -245,12 +266,65 @@ class MainActivity : Activity() {
         runOnUiThread { refreshRequestText() }
     }
 
+    private fun matchesFilter(line: String): Boolean {
+        val lower = line.lowercase()
+        return when (requestFilter) {
+            "API" -> lower.contains("[api?]") || lower.contains("/api/") || lower.contains("graphql") || lower.contains("/ajax/")
+            "VIDEO" -> lower.contains("[medio?]") || listOf(".m3u8", ".mpd", ".mp4", ".m4v", ".webm", ".ts").any { lower.substringBefore("?").contains(it) }
+            "JS" -> lower.contains("[js]") || lower.substringBefore("?").endsWith(".js")
+            "ERRORES" -> lower.startsWith("http ") || lower.contains(" error ") || lower.contains("failed")
+            else -> true
+        }
+    }
+
     private fun refreshRequestText() {
         val snapshot = synchronized(requestLog) { requestLog.toList() }
+        val filtered = snapshot.filter { matchesFilter(it) }.asReversed()
         requestText.text = if (snapshot.isEmpty()) {
             "Todavía no se observaron solicitudes. Abrí una página o recargala."
         } else {
-            "Total: ${snapshot.size} (máximo 300)\\n\\n" + snapshot.asReversed().joinToString("\\n")
+            "Filtro: $requestFilter · ${filtered.size}/${snapshot.size} solicitudes (máximo 300)\n\n" +
+                filtered.joinToString("\n\n")
+        }
+    }
+
+    private fun exportRequests() {
+        val snapshot = synchronized(requestLog) { requestLog.toList() }
+        if (snapshot.isEmpty()) {
+            toast("Primero abrí una página para registrar solicitudes")
+            return
+        }
+        val requests = org.json.JSONArray()
+        snapshot.forEachIndexed { index, line ->
+            requests.put(org.json.JSONObject().put("index", index + 1).put("entry", line))
+        }
+        pendingExport = org.json.JSONObject()
+            .put("app", "WebData Explorer")
+            .put("url", urlInput.text.toString())
+            .put("count", snapshot.size)
+            .put("requests", requests)
+            .toString(2)
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/json"
+            putExtra(Intent.EXTRA_TITLE, "webdata-solicitudes.json")
+        }
+        startActivityForResult(intent, exportRequestCode)
+    }
+
+    @Deprecated("Deprecated in Android API, retained for broad device compatibility")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != exportRequestCode || resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+        runCatching {
+            contentResolver.openOutputStream(uri)?.use { output ->
+                output.write(pendingExport.toByteArray(Charsets.UTF_8))
+            } ?: error("No se pudo abrir el archivo")
+        }.onSuccess {
+            toast("JSON exportado correctamente")
+        }.onFailure {
+            toast("No se pudo exportar: ${it.message ?: "error"}")
         }
     }
 
