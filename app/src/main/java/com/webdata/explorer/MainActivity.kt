@@ -350,7 +350,7 @@ class MainActivity : Activity() {
   var LIMIT=12000;
   function redact(s) {
    s=String(s||'').slice(0,LIMIT);
-   s=s.replace(/(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|secret)(\s*[:=]\s*)([^\r\n,;&]+)/ig,'$1$2[REDACTADO]');
+   s=s.replace(/(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|secret|session|jwt|credential|signature)(\s*[:=]\s*)([^\r\n,;&]+)/ig,'$1$2[REDACTADO]');
    s=s.replace(/("(?:password|passwd|token|access_token|refresh_token|api_key|secret|authorization|cookie|session|jwt|credential|signature)"\s*:\s*")[^"]*(")/ig,'$1[REDACTADO]$2');
    return s;
   }
