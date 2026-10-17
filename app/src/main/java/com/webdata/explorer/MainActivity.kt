@@ -1006,7 +1006,9 @@ class MainActivity : Activity() {
         }
         val requests = org.json.JSONArray()
         snapshot.forEachIndexed { index, line ->
-            requests.put(org.json.JSONObject().put("index", index + 1).put("entry", line))
+            val item = org.json.JSONObject().put("index", index + 1).put("entry", line)
+            requestDetails[line]?.let { item.put("details", it) }
+            requests.put(item)
         }
         pendingExport = org.json.JSONObject()
             .put("app", "WebData Explorer")
