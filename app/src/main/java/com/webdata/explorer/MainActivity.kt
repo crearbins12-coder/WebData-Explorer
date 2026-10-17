@@ -879,10 +879,10 @@ class MainActivity : Activity() {
 
     private fun cleanSensitiveText(raw: String): String {
         var value = raw
-        value = value.replace(Regex("(?i)(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|secret)(\\s*[:=]\\s*)([^\\r\\n,;&]+)")) { m ->
+        value = value.replace(Regex("(?i)(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|secret|session|jwt|credential|signature)(\\s*[:=]\\s*)([^\\r\\n,;&]+)")) { m ->
             m.groupValues[1] + m.groupValues[2] + "[REDACTADO]"
         }
-        value = value.replace(Regex("(?i)(\\\"(?:password|passwd|token|access_token|refresh_token|api_key|secret|authorization|cookie)\\\"\\s*:\\s*\\\")[^\\\"]*(\\\")"), "$1[REDACTADO]$2")
+        value = value.replace(Regex("(?i)(\\\"(?:password|passwd|token|access_token|refresh_token|api_key|secret|authorization|cookie|session|jwt|credential|signature)\\\"\\s*:\\s*\\\")[^\\\"]*(\\\")"), "$1[REDACTADO]$2")
         return value
     }
 
@@ -905,7 +905,13 @@ class MainActivity : Activity() {
             .put("responseHeaders", cleanSensitiveText(responseHeaders).take(12000))
             .put("responseBody", cleanSensitiveText(responseBody).take(16000))
             .put("captureState", captureState).put("note", note)
-        requestDetails[line] = detail
+        synchronized(requestDetails) {
+            requestDetails[line] = detail
+            while (requestDetails.size > 40) {
+                val oldest = requestDetails.keys.firstOrNull() ?: break
+                requestDetails.remove(oldest)
+            }
+        }
         addRequest(line)
     }
 
@@ -936,7 +942,7 @@ class MainActivity : Activity() {
             if (raw.isNotBlank()) return raw
             return when (index) {
                 1 -> "Encabezados no disponibles: la solicitud no fue observada por instrumentación JavaScript o WebView no los expuso."
-                2 -> "Cuerpo enviado no disponible. WebView no ofrece el cuerpo de solicitudes de recursos en shouldInterceptRequest; para JavaScript solo se capturan cuerpos de texto accesibles."
+                2 -> if (detail.optString("method") in listOf("GET", "HEAD") && detail.optString("kind") == "WEBVIEW") "No se observó cuerpo enviado. GET/HEAD normalmente no envían cuerpo; shouldInterceptRequest no expone el cuerpo original." else "Cuerpo enviado no disponible. WebView no ofrece el cuerpo de solicitudes de recursos en shouldInterceptRequest; para JavaScript solo se capturan cuerpos de texto accesibles."
                 3 -> "Encabezados de respuesta no disponibles para esta solicitud."
                 else -> "Cuerpo recibido no disponible. WebView no expone directamente el cuerpo de respuestas desde shouldInterceptRequest; el navegador solo permite leer algunas respuestas fetch/XHR accesibles."
             }
