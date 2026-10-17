@@ -33,7 +33,7 @@ object HttpProbe {
             errorType != null -> "FALLÓ: $errorType"
             statusCode == null -> "FALLÓ: sin respuesta HTTP"
             statusCode in 200..299 -> "ÉXITO · HTTP $statusCode"
-            else -> "RESPUESTA HTTP NO EXITOSA · $statusCode"
+            else -> "RESPUESTA HTTP NO EXITOSA · HTTP $statusCode"
         }
 
         fun formatForDisplay(): String = buildString {
