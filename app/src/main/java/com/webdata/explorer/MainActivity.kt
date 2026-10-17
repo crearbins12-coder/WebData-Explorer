@@ -33,6 +33,7 @@ import android.widget.Toast
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import java.net.HttpURLConnection
+import java.io.ByteArrayInputStream
 import java.net.URI
 import java.net.URL
 import java.util.concurrent.Executors
@@ -413,6 +414,25 @@ class MainActivity : Activity() {
                 override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
                     if (request != null) {
                         val url = request.url.toString()
+                        if (url.startsWith("https://webdata.test/__wdx_test_api/")) {
+                            // Endpoint local controlado para comprobar GET/POST y JSON sin depender de Internet.
+                            val payload = org.json.JSONObject()
+                                .put("test", true)
+                                .put("method", request.method.uppercase())
+                                .put("path", request.url.path)
+                                .put("message", "Respuesta JSON local de prueba")
+                                .put("knownValue", 42)
+                                .toString()
+                            val headers = mapOf(
+                                "Content-Type" to "application/json; charset=utf-8",
+                                "Cache-Control" to "no-store",
+                                "Access-Control-Allow-Origin" to "*"
+                            )
+                            return WebResourceResponse(
+                                "application/json", "UTF-8", 200, "OK",
+                                headers, ByteArrayInputStream(payload.toByteArray(Charsets.UTF_8))
+                            )
+                        }
                         if (url.startsWith("http://") || url.startsWith("https://")) {
                             // Cada navegación principal inicia un registro nuevo: no mezclar
                             // las solicitudes de la página anterior con la página actual.
@@ -586,6 +606,7 @@ class MainActivity : Activity() {
                 control("PESTAÑAS") { showBrowserTabs() }
                 control("PAUSAR SCAN") { toggleScan() }
                 control("DIAGNÓSTICO") { showDiagnostics() }
+                control("PRUEBA CAPTURA") { runCaptureTest() }
             }
             addView(browserControls)
             addView(browser, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -1095,6 +1116,42 @@ class MainActivity : Activity() {
         updateSection()
         android.app.AlertDialog.Builder(this).setTitle("Detalle de solicitud").setView(layout).setPositiveButton("Cerrar", null).show()
     }
+    private fun runCaptureTest() {
+        if (!::browser.isInitialized) return
+        showBrowser()
+        statusText.text = "Prueba controlada: GET y POST locales…"
+        val html = """
+            <!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+            <title>Prueba de captura WebData</title></head>
+            <body style="font-family:sans-serif;padding:18px;background:#171b28;color:#f2f4f8">
+            <h2>Prueba de captura HTTP</h2>
+            <p>Esta página genera un GET y un POST contra una respuesta JSON local conocida.</p>
+            <pre id="out">Preparando prueba…</pre>
+            <script>
+            setTimeout(async function(){
+              var out=document.getElementById('out');
+              try {
+                var getResponse=await fetch('/__wdx_test_api/get');
+                var getJson=await getResponse.json();
+                var postPayload={probe:'POST_BODY_CAPTURED',value:42};
+                var postResponse=await fetch('/__wdx_test_api/post',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(postPayload)});
+                var postJson=await postResponse.json();
+                out.textContent=JSON.stringify({
+                  get:{status:getResponse.status,body:getJson},
+                  post:{status:postResponse.status,sent:postPayload,body:postJson},
+                  pageStillWorking:true
+                },null,2);
+                document.body.setAttribute('data-test-result','PASS');
+              } catch(e) {
+                out.textContent='FALLO DE PRUEBA: '+String(e);
+                document.body.setAttribute('data-test-result','FAIL');
+              }
+            },1200);
+            </script></body></html>
+        """.trimIndent()
+        browser.loadDataWithBaseURL("https://webdata.test/", html, "text/html", "UTF-8", "https://webdata.test/")
+    }
+
     private fun showDiagnostics() {
         val snapshot = synchronized(requestLog) { requestLog.toList() }
         val details = synchronized(requestDetails) { requestDetails.values.map { org.json.JSONObject(it.toString()) } }
