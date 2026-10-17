@@ -24,6 +24,6 @@ android {
 
 dependencies {
     implementation("androidx.webkit:webkit:1.12.1")
-    implementation("org.smali:dexlib2:3.0.9")
+    implementation("com.android.tools.smali:smali-dexlib2:3.0.9")
     testImplementation("junit:junit:4.13.2")
 }
