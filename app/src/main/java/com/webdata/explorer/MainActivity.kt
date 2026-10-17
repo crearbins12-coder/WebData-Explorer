@@ -21,6 +21,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
 import android.widget.FrameLayout
 import android.widget.Button
 import android.widget.EditText
@@ -56,12 +57,13 @@ class MainActivity : Activity() {
     private val browserTabs = mutableListOf<String>()
     private var activeTabIndex = -1
     private var switchingTab = false
-    private var scanEnabled = true
+    @Volatile private var scanEnabled = true
+    @Volatile private var captureEventsReceived = 0
+    @Volatile private var captureBridgeErrors = 0
 
     private val networkInstrumentationScript = """(function(){
  try {
-  // Solo instrumenta el documento principal; no modifica iframes de terceros.
-  if (window.top !== window) return JSON.stringify({resources:[],media:[],network:[]});
+  // Se instala en los frames donde WebView permita ejecutar el script.
   if (window.__wdxInstalled) return JSON.stringify({resources:performance.getEntriesByType('resource').map(function(e){return e.name;}),media:[],network:[]});
   window.__wdxInstalled=true; window.__wdxNet=[]; window.__wdxNetCursor=0;
   var LIMIT=12000;
@@ -114,6 +116,13 @@ class MainActivity : Activity() {
     item.contentType=String(item.contentType||'');
     item.captureState=item.captureState||((item.responseBody||item.responseHeaders)?'PARCIAL':'LIMITADA');
     item.note=item.note||'';
+    // El puente entrega los eventos de cada frame, incluidos los iframes accesibles.
+    try {
+     if (window.WebDataCapture && typeof window.WebDataCapture.postCapture==='function') {
+      window.WebDataCapture.postCapture(JSON.stringify(item));
+      return;
+     }
+    } catch(e) {}
     window.__wdxNet.push(item);
     if (window.__wdxNet.length>200) window.__wdxNet.shift();
    } catch(e) {}
@@ -352,6 +361,8 @@ class MainActivity : Activity() {
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
             settings.loadsImagesAutomatically = true
             settings.javaScriptCanOpenWindowsAutomatically = true
+            // Recibe capturas de fetch/XHR desde el documento y los frames donde corre el script.
+            addJavascriptInterface(WebDataCaptureBridge(), "WebDataCapture")
             // Instrumenta fetch/XHR al inicio del documento para no perder las API llamadas durante la carga.
             if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
                 runCatching { WebViewCompat.addDocumentStartJavaScript(this, networkInstrumentationScript, setOf("*")) }
@@ -914,6 +925,38 @@ class MainActivity : Activity() {
         }
         value = value.replace(Regex("(?i)(\\\"(?:password|passwd|token|access_token|refresh_token|api_key|secret|authorization|cookie|session|jwt|credential|signature)\\\"\\s*:\\s*\\\")[^\\\"]*(\\\")"), "$1[REDACTADO]$2")
         return value
+    }
+
+    private inner class WebDataCaptureBridge {
+        @JavascriptInterface
+        fun postCapture(payload: String?) {
+            if (!scanEnabled || payload.isNullOrBlank()) return
+            if (payload.length > 48_000) {
+                captureBridgeErrors++
+                return
+            }
+            try {
+                val item = org.json.JSONObject(payload)
+                val url = item.optString("url", "")
+                if (!url.startsWith("https://") && !url.startsWith("http://")) return
+                captureEventsReceived++
+                addDetailedRequest(
+                    item.optString("kind", "FETCH/XHR"),
+                    item.optString("method", "GET"),
+                    url,
+                    item.optInt("status", 0),
+                    item.optString("requestHeaders", ""),
+                    item.optString("requestBody", ""),
+                    item.optString("responseHeaders", ""),
+                    item.optString("responseBody", ""),
+                    item.optString("contentType", ""),
+                    item.optString("captureState", "PARCIAL"),
+                    item.optString("note", "Captura recibida desde instrumentación JavaScript.")
+                )
+            } catch (_: Exception) {
+                captureBridgeErrors++
+            }
+        }
     }
 
     private fun addDetailedRequest(
