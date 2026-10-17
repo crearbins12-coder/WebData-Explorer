@@ -90,9 +90,19 @@ class MainActivity : Activity() {
                     for (i in 0 until network.length()) {
                         val item = network.optJSONObject(i) ?: continue
                         val kind = item.optString("kind", "FETCH")
+                        val method = item.optString("method", "GET")
                         val url = item.optString("url", "")
                         val code = item.optInt("status", 0)
-                        if (url.startsWith("http://") || url.startsWith("https://")) addRequest("$kind HTTP $code [${classifyRequest(url)}] $url")
+                        if (url.startsWith("http://") || url.startsWith("https://")) {
+                            val headers = item.optString("headers", "").trim()
+                            val jsonBody = item.optString("json", "").trim()
+                            val detail = buildString {
+                                append("$kind $method HTTP $code [${classifyRequest(url)}] $url")
+                                if (headers.isNotBlank()) append("\n  ENCABEZADOS DE RESPUESTA:\n").append(headers.lines().joinToString("\n") { "  $it" })
+                                if (jsonBody.isNotBlank()) append("\n  CUERPO JSON:\n  ").append(jsonBody.replace("\n", "\n  "))
+                            }
+                            addRequest(detail)
+                        }
                     }
                 }
                 if (browserMode) mainHandler.postDelayed(this, 2800)
@@ -325,23 +335,40 @@ class MainActivity : Activity() {
                                 if (!window.__wdxInstalled) {
                                     window.__wdxInstalled = true;
                                     window.__wdxNet = [];
-                                    var record = function(kind, url, status) {
+                                    var record = function(item) {
                                         try {
-                                            var absolute = new URL(String(url), location.href).href;
-                                            window.__wdxNet.push({kind:kind,url:absolute,status:status || 0});
+                                            item.url = new URL(String(item.url || ''), location.href).href;
+                                            item.headers = String(item.headers || '').slice(0, 5000);
+                                            item.json = String(item.json || '').slice(0, 10000);
+                                            window.__wdxNet.push(item);
                                             if (window.__wdxNet.length > 200) window.__wdxNet.shift();
                                         } catch(e) {}
                                     };
+                                    var headerText = function(headers) {
+                                        var out = [];
+                                        try { headers.forEach(function(v,k){ out.push(k + ': ' + v); }); } catch(e) {}
+                                        return out.join('\n');
+                                    };
+                                    var jsonText = function(text, contentType) {
+                                        if (!/json/i.test(contentType || '')) return '';
+                                        try { JSON.parse(text); return String(text).slice(0,10000); } catch(e) { return ''; }
+                                    };
                                     if (window.fetch) {
                                         var originalFetch = window.fetch;
-                                        window.fetch = function() {
-                                            var input = arguments[0];
+                                        window.fetch = function(input, init) {
                                             var url = input && input.url ? input.url : input;
+                                            var method = (init && init.method) || (input && input.method) || 'GET';
                                             return originalFetch.apply(this, arguments).then(function(response) {
-                                                record('FETCH', url, response.status);
+                                                var item = {kind:'FETCH', method:method, url:url, status:response.status, headers:headerText(response.headers), json:''};
+                                                try {
+                                                    var clone = response.clone();
+                                                    var ct = clone.headers.get('content-type') || '';
+                                                    if (/json/i.test(ct)) clone.text().then(function(body){ item.json = jsonText(body,ct); record(item); }).catch(function(){ record(item); });
+                                                    else record(item);
+                                                } catch(e) { record(item); }
                                                 return response;
                                             }, function(error) {
-                                                record('FETCH_ERROR', url, 0);
+                                                record({kind:'FETCH_ERROR',method:method,url:url,status:0,headers:'',json:String(error)});
                                                 throw error;
                                             });
                                         };
@@ -356,7 +383,19 @@ class MainActivity : Activity() {
                                     XMLHttpRequest.prototype.send = function() {
                                         var xhr = this;
                                         xhr.addEventListener('loadend', function() {
-                                            record('XHR ' + (xhr.__wdxMethod || 'GET'), xhr.__wdxUrl || '', xhr.status);
+                                            var headers = '';
+                                            var body = '';
+                                            var ct = '';
+                                            try { headers = xhr.getAllResponseHeaders() || ''; } catch(e) {}
+                                            try { ct = xhr.getResponseHeader('content-type') || ''; } catch(e) {}
+                                            try {
+                                                if (/json/i.test(ct)) {
+                                                    if (xhr.responseType === 'json') body = JSON.stringify(xhr.response);
+                                                    else if (!xhr.responseType || xhr.responseType === 'text') body = xhr.responseText || '';
+                                                    body = jsonText(body,ct);
+                                                }
+                                            } catch(e) {}
+                                            record({kind:'XHR',method:xhr.__wdxMethod || 'GET',url:xhr.__wdxUrl || '',status:xhr.status || 0,headers:headers,json:body});
                                         });
                                         return originalSend.apply(this, arguments);
                                     };
