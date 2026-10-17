@@ -1548,8 +1548,7 @@ class MainActivity : Activity() {
                 key.contains("/api/", true) || key.contains("graphql", true) -> "ruta API"
                 else -> "probable"
             }
-            "$" + "{key} · HTTP $" + "{code} · $" + "{items.size} registro(s) · $" + "{confidence}\n  $" + "{responseType} · $" + "{keys}"
-                .let { it to latest.first }
+            ("$key · HTTP $code · ${items.size} registro(s) · $confidence\n  $responseType · $keys") to latest.first
         }
 
         android.app.AlertDialog.Builder(this)
