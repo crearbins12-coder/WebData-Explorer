@@ -245,6 +245,9 @@ class MainActivity : Activity() {
                     if (request != null) {
                         val url = request.url.toString()
                         if (url.startsWith("http://") || url.startsWith("https://")) {
+                            // Cada navegación principal inicia un registro nuevo: no mezclar
+                            // las solicitudes de la página anterior con la página actual.
+                            if (request.isForMainFrame) clearRequestLogForNewPage()
                             val kind = classifyRequest(url)
                             addRequest("${request.method} [$kind] ${if (request.isForMainFrame) "[PÁGINA]" else "[RECURSO]"} $url")
                         }
@@ -667,6 +670,21 @@ class MainActivity : Activity() {
             mainHandler.postDelayed(saveRequestLogRunnable, 1000)
             mainHandler.removeCallbacks(refreshRequestTextRunnable)
             mainHandler.postDelayed(refreshRequestTextRunnable, 400)
+        }
+    }
+
+    private fun clearRequestLogForNewPage() {
+        mainHandler.removeCallbacks(saveRequestLogRunnable)
+        mainHandler.removeCallbacks(refreshRequestTextRunnable)
+        synchronized(requestLog) {
+            requestLog.clear()
+            requestKeys.clear()
+        }
+        // También borrar el registro persistido para que al reabrir la app
+        // no reaparezcan solicitudes pertenecientes a páginas anteriores.
+        requestStore().edit().putString("requests", "[]").apply()
+        if (::requestText.isInitialized) {
+            mainHandler.post { refreshRequestText() }
         }
     }
 
