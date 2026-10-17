@@ -701,17 +701,17 @@ class MainActivity : Activity() {
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
             addView(browser, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
             var requestsExpanded = false
-            lateinit var requestListScroll: ScrollView
-            lateinit var requestFiltersScroll: HorizontalScrollView
+            var requestListScroll: ScrollView? = null
+            var requestFiltersScroll: HorizontalScrollView? = null
             val requestsToggle = Button(this@MainActivity).apply {
                 text = "▴  MOSTRAR SOLICITUDES DE RED"
                 textSize = 11f
                 setOnClickListener {
                     requestsExpanded = !requestsExpanded
                     text = if (requestsExpanded) "▾  OCULTAR SOLICITUDES DE RED" else "▴  MOSTRAR SOLICITUDES DE RED"
-                    requestListScroll.visibility = if (requestsExpanded) View.VISIBLE else View.GONE
-                    requestFiltersScroll.visibility = if (requestsExpanded) View.VISIBLE else View.GONE
-                    requestListScroll.layoutParams = (requestListScroll.layoutParams as LinearLayout.LayoutParams).apply {
+                    requestListScroll?.visibility = if (requestsExpanded) View.VISIBLE else View.GONE
+                    requestFiltersScroll?.visibility = if (requestsExpanded) View.VISIBLE else View.GONE
+                    requestListScroll?.layoutParams = (requestListScroll?.layoutParams as? LinearLayout.LayoutParams)?.apply {
                         height = if (requestsExpanded) dp(190) else 0
                     }
                 }
