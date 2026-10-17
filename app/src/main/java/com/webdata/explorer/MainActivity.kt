@@ -307,6 +307,18 @@ class MainActivity : Activity() {
             setPadding(dp(12), dp(10), dp(12), dp(10))
             setBackgroundColor(Color.rgb(27, 36, 54))
         }
+        urlInput.setOnEditorActionListener { _, actionId, event ->
+            val enterPressed = event?.keyCode == android.view.KeyEvent.KEYCODE_ENTER &&
+                event.action == android.view.KeyEvent.ACTION_DOWN
+            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_GO ||
+                actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH ||
+                enterPressed) {
+                if (browserMode) showBrowser() else analyze()
+                true
+            } else false
+        }
+        urlInput.imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_GO
+
         root.addView(urlInput, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ))
@@ -397,8 +409,14 @@ class MainActivity : Activity() {
         statusText = TextView(this).apply {
             text = "Listo para analizar una URL pública."
             textSize = 13f
-            setTextColor(Color.rgb(120, 210, 170))
-            setPadding(0, dp(10), 0, dp(8))
+            setTextColor(Color.rgb(145, 224, 190))
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                cornerRadius = dp(10).toFloat()
+                setColor(Color.rgb(20, 39, 43))
+                setStroke(dp(1), Color.rgb(39, 82, 76))
+            }
         }
         root.addView(statusText)
 
