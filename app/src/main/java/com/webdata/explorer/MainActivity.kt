@@ -275,25 +275,27 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         excludeNoisyResources = getSharedPreferences("webdata_settings", Context.MODE_PRIVATE).getBoolean("exclude_noisy_resources", false)
-        window.statusBarColor = Color.rgb(15, 18, 28)
-        window.navigationBarColor = Color.rgb(15, 18, 28)
-        window.decorView.setBackgroundColor(Color.rgb(15, 18, 28))
+        window.statusBarColor = Color.rgb(18, 24, 40)
+        window.navigationBarColor = Color.rgb(18, 24, 40)
+        window.decorView.setBackgroundColor(Color.rgb(12, 17, 29))
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(20), dp(18), dp(18))
+            setPadding(dp(14), dp(14), dp(14), dp(12))
+            setBackgroundColor(Color.rgb(12, 17, 29))
         }
         root.addView(TextView(this).apply {
-            text = "WebData Explorer"
-            textSize = 26f
+            text = "🌐 WebData Explorer"
+            textSize = 25f
             setTextColor(Color.WHITE)
             setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(dp(4), dp(5), dp(4), 0)
         })
         root.addView(TextView(this).apply {
-            text = "Analizador de HTML · APIs · JavaScript · multimedia"
+            text = "Navegá, inspeccioná solicitudes y encontrá APIs y recursos multimedia."
             textSize = 13f
-            setTextColor(Color.LTGRAY)
-            setPadding(0, dp(5), 0, dp(16))
+            setTextColor(Color.rgb(177, 190, 211))
+            setPadding(dp(4), dp(5), dp(4), dp(14))
         })
 
         urlInput = EditText(this).apply {
@@ -303,14 +305,15 @@ class MainActivity : Activity() {
             setTextColor(Color.WHITE)
             setHintTextColor(Color.GRAY)
             setPadding(dp(12), dp(10), dp(12), dp(10))
-            setBackgroundColor(Color.rgb(35, 40, 54))
+            setBackgroundColor(Color.rgb(27, 36, 54))
         }
         root.addView(urlInput, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ))
 
         root.addView(Button(this).apply {
-            text = "ANALIZAR PÁGINA"
+            text = "🔎  ANALIZAR PÁGINA"
+            textSize = 14f
             setOnClickListener { analyze() }
         }, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
@@ -318,18 +321,18 @@ class MainActivity : Activity() {
 
         val navButtons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         navButtons.addView(Button(this).apply {
-            text = "NAVEGADOR"
+            text = "🌐  NAVEGADOR"
             setOnClickListener { showBrowser() }
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         navButtons.addView(Button(this).apply {
-            text = "ANALIZADOR"
+            text = "📊  ANALIZADOR"
             setOnClickListener { showAnalyzer() }
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(navButtons)
 
         val actionButtons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         actionButtons.addView(Button(this).apply {
-            text = "COPIAR"
+            text = "📋 COPIAR"
             setOnClickListener {
                 val content = if (browserMode) synchronized(requestLog) { requestLog.joinToString("\\n") } else lastReport
                 if (content.isBlank()) toast("Todavía no hay datos para copiar")
@@ -341,7 +344,7 @@ class MainActivity : Activity() {
             }
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         actionButtons.addView(Button(this).apply {
-            text = "EXPORTAR JSON"
+            text = "⬇ EXPORTAR JSON"
             setOnClickListener { exportRequests() }
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(actionButtons)
@@ -606,7 +609,7 @@ class MainActivity : Activity() {
                     if (browser.url != null) browser.reload() else toast("Abrí una página primero")
                 }
                 control("■") { browser.stopLoading(); statusText.text = "Carga detenida" }
-                control("COMPARTIR") {
+                control("↗ Compartir") {
                     val current = browser.url ?: urlInput.text.toString()
                     if (current.isNotBlank()) {
                         startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
@@ -629,7 +632,10 @@ class MainActivity : Activity() {
                 control("SESIONES") { showSavedSessions() }
                 control("AJUSTES") { showSettings() }
             }
-            addView(browserControls)
+            addView(HorizontalScrollView(this@MainActivity).apply {
+                isHorizontalScrollBarEnabled = false
+                addView(browserControls)
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
             addView(browser, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
             addView(TextView(this@MainActivity).apply {
                 text = "SOLICITUDES DE RED · FILTROS"
@@ -665,6 +671,7 @@ class MainActivity : Activity() {
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
         ).apply { topMargin = dp(6) })
         setContentView(root)
+        styleInterface(root)
         browser.tag = browserPanel
         restoreRequestLog()
         restoreBrowserTabs()
@@ -673,6 +680,36 @@ class MainActivity : Activity() {
             urlInput.hint = "URL de la pestaña " + (activeTabIndex + 1)
         }
         refreshRequestText()
+    }
+
+    private fun styleInterface(view: View) {
+        if (view is Button) {
+            val label = view.text?.toString().orEmpty()
+            val primary = label.contains("ANALIZAR PÁGINA") || label.contains("PRUEBA CAPTURA")
+            val bg = if (primary) Color.rgb(48, 111, 220) else Color.rgb(34, 47, 68)
+            view.background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                cornerRadius = dp(12).toFloat()
+                setColor(bg)
+                setStroke(dp(1), if (primary) Color.rgb(80, 145, 245) else Color.rgb(57, 73, 98))
+            }
+            view.setTextColor(Color.WHITE)
+            view.textSize = if (view.textSize > 12f) 13f else 11f
+            view.isAllCaps = false
+            view.minHeight = dp(42)
+            view.setPadding(dp(10), dp(5), dp(10), dp(5))
+            view.stateListAnimator = null
+        } else if (view is EditText) {
+            view.background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                cornerRadius = dp(12).toFloat()
+                setColor(Color.rgb(27, 36, 54))
+                setStroke(dp(1), Color.rgb(66, 88, 122))
+            }
+        }
+        if (view is ViewGroup) {
+            for (i in 0 until view.childCount) styleInterface(view.getChildAt(i))
+        }
     }
 
     private fun browserTabStore() = getSharedPreferences("webdata_tabs", Context.MODE_PRIVATE)
