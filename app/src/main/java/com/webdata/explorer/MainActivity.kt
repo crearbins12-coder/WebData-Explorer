@@ -1641,12 +1641,34 @@ class MainActivity : Activity() {
         }
         panel.addView(explanation)
 
-        fun addProbeSection(title: String, method: String, url: String, body: String) {
+        fun addProbeSection(title: String, method: String, defaultUrl: String, defaultBody: String) {
             panel.addView(TextView(this).apply {
                 text = title
                 textSize = 15f
                 setPadding(0, dp(8), 0, dp(4))
             })
+            val urlInput = EditText(this).apply {
+                setSingleLine(true)
+                hint = "https://ejemplo.com/api"
+                setText(defaultUrl)
+                textSize = 13f
+                inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
+            }
+            panel.addView(TextView(this).apply { text = "URL"; textSize = 12f })
+            panel.addView(urlInput)
+
+            val bodyInput = EditText(this).apply {
+                hint = if (method == "POST") "Cuerpo opcional: JSON, texto o formulario" else "GET no envía cuerpo"
+                setText(defaultBody)
+                textSize = 13f
+                minLines = if (method == "POST") 3 else 1
+                maxLines = 6
+                gravity = android.view.Gravity.TOP
+                inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            }
+            panel.addView(TextView(this).apply { text = "Cuerpo de la solicitud"; textSize = 12f })
+            panel.addView(bodyInput)
+
             val output = TextView(this).apply {
                 text = "PENDIENTE · La prueba todavía no se ejecutó."
                 textSize = 11f
@@ -1658,9 +1680,19 @@ class MainActivity : Activity() {
             val runButton = Button(this).apply { text = "EJECUTAR $method" }
             val copyButton = Button(this).apply { text = "COPIAR RESULTADO"; isEnabled = false }
             runButton.setOnClickListener {
+                val url = urlInput.text.toString().trim()
+                val body = bodyInput.text.toString()
+                if (!(url.startsWith("https://", true) || url.startsWith("http://", true))) {
+                    toast("Ingresá una URL que comience con http:// o https://")
+                    return@setOnClickListener
+                }
+                if (method == "GET" && body.isNotEmpty()) {
+                    toast("GET no admite cuerpo en esta prueba. Dejá ese campo vacío.")
+                    return@setOnClickListener
+                }
                 runButton.isEnabled = false
-                output.text = "EJECUTANDO $method…\nURL: $url\nMétodo: $method\nEsperando una respuesta HTTP real."
                 copyButton.isEnabled = false
+                output.text = "EJECUTANDO $method…\\nURL: $url\\nMétodo: $method\\nEsperando una respuesta HTTP real."
                 executor.execute {
                     val result = try {
                         HttpProbe.execute(method, url, body)
@@ -1695,8 +1727,8 @@ class MainActivity : Activity() {
             panel.addView(output)
         }
 
-        addProbeSection("1. GET real", "GET", HttpProbe.GET_URL, "")
-        addProbeSection("2. POST real con JSON", "POST", HttpProbe.POST_URL, HttpProbe.POST_JSON)
+        addProbeSection("1. GET directo (URL editable)", "GET", HttpProbe.GET_URL, "")
+        addProbeSection("2. POST directo (URL y cuerpo editables)", "POST", HttpProbe.POST_URL, HttpProbe.POST_JSON)
 
         val scroll = ScrollView(this).apply { addView(panel) }
         android.app.AlertDialog.Builder(this)
