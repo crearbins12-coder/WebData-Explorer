@@ -2059,7 +2059,6 @@ class MainActivity : Activity() {
         }
         addReportCopyButton(
             "COPIAR LLAMADAS DE RED",
-            "=== ENDPOINTS Y CONTEXTO DE CÓDIGO ===",
             "=== POSIBLES PUNTOS DE LLAMADA DE RED ===",
             "=== URLS ENCONTRADAS EN DEX ==="
         )
