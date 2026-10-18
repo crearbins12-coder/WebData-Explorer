@@ -1364,10 +1364,36 @@ class MainActivity : Activity() {
     }
 
     private fun showRequestDetails(line: String, detailOverride: org.json.JSONObject? = null) {
-        val detail = detailOverride ?: requestDetails[line] ?: run {
+        val original = detailOverride ?: requestDetails[line] ?: run {
             toast("Esta solicitud solo tiene URL; WebView no expuso más datos")
             return
         }
+        // shouldInterceptRequest suele crear primero una fila WEBVIEW con HTTP ?.
+        // Si fetch/XHR capturó la misma llamada, abrir la fila básica debe mostrar
+        // también la captura más completa, en vez de dejar al usuario en una fila vacía.
+        val originalUrl = runCatching { URI(original.optString("url")) }.getOrNull()
+        val needsEnrichment = original.optInt("status", 0) <= 0 ||
+            original.optString("responseBody").isBlank() ||
+            original.optString("responseHeaders").isBlank()
+        val richer = if (needsEnrichment && originalUrl != null) {
+            synchronized(requestDetails) {
+                requestDetails.values.asSequence()
+                    .filter { candidate ->
+                        if (candidate === original) return@filter false
+                        val candidateUrl = runCatching { URI(candidate.optString("url")) }.getOrNull()
+                        candidate.optString("method").equals(original.optString("method"), true) &&
+                            candidate.optString("kind") !in listOf("WEBVIEW", "WEBVIEW_HTTP_ERROR") &&
+                            candidateUrl?.host.equals(originalUrl.host, true) &&
+                            candidateUrl?.path == originalUrl.path &&
+                            (candidate.optInt("status", 0) > 0 ||
+                                candidate.optString("responseBody").isNotBlank() ||
+                                candidate.optString("responseHeaders").isNotBlank())
+                    }
+                    .lastOrNull()
+                    ?.let { org.json.JSONObject(it.toString()) }
+            }
+        } else null
+        val detail = richer ?: original
         val labels = arrayOf("Resumen", "Solicitud", "Encabezados enviados", "Cuerpo enviado", "Encabezados recibidos", "Cuerpo recibido", "Errores/diagnóstico")
         val keys = arrayOf("", "", "requestHeaders", "requestBody", "responseHeaders", "responseBody", "note")
         var selected = 0
