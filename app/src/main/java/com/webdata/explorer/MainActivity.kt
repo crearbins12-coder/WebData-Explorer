@@ -1182,6 +1182,32 @@ class MainActivity : Activity() {
             .show()
     }
 
+    private fun showRequestActions(line: String) {
+        val detail = requestDetails[line]
+        val url = detail?.optString("url").orEmpty().ifBlank {
+            Regex("""https?://[^\\s]+""", RegexOption.IGNORE_CASE).find(line)?.value.orEmpty()
+        }
+        if (url.isBlank()) {
+            toast("No se pudo recuperar la URL de esta solicitud")
+            return
+        }
+        val actions = if (detail != null) arrayOf("COPIAR URL COMPLETA", "VER DETALLES")
+            else arrayOf("COPIAR URL COMPLETA")
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Solicitud")
+            .setItems(actions) { _, which ->
+                if (which == 0) {
+                    val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(ClipData.newPlainText("URL de solicitud", url))
+                    toast("URL completa copiada")
+                } else if (which == 1 && detail != null) {
+                    showRequestDetails(line, detail)
+                }
+            }
+            .setNegativeButton("CERRAR", null)
+            .show()
+    }
+
     private fun refreshRequestText() {
         val snapshot = synchronized(requestLog) { requestLog.toList() }
         val filtered = snapshot.filter { matchesFilter(it) }.asReversed().take(300)
@@ -1195,15 +1221,13 @@ class MainActivity : Activity() {
             val start = out.length
             out.append(displayRequestLine(line))
             val end = out.length
-            if (requestDetails.containsKey(line)) {
-                out.setSpan(object : ClickableSpan() {
-                    override fun onClick(widget: View) = showRequestDetails(line)
-                    override fun updateDrawState(ds: TextPaint) {
-                        ds.color = Color.rgb(120, 190, 255)
-                        ds.isUnderlineText = true
-                    }
-                }, start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            }
+            out.setSpan(object : ClickableSpan() {
+                override fun onClick(widget: View) = showRequestActions(line)
+                override fun updateDrawState(ds: TextPaint) {
+                    ds.color = Color.rgb(120, 190, 255)
+                    ds.isUnderlineText = true
+                }
+            }, start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             if (index != filtered.lastIndex) out.append("\n\n")
         }
         requestText.text = out
