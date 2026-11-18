@@ -1185,7 +1185,7 @@ class MainActivity : Activity() {
     private fun showRequestActions(line: String) {
         val detail = requestDetails[line]
         val url = detail?.optString("url").orEmpty().ifBlank {
-            Regex("""https?://[^\\s]+""", RegexOption.IGNORE_CASE).find(line)?.value.orEmpty()
+            Regex("""https?://[^\s]+""", RegexOption.IGNORE_CASE).find(line)?.value.orEmpty()
         }
         if (url.isBlank()) {
             toast("No se pudo recuperar la URL de esta solicitud")
